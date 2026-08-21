@@ -1,7 +1,8 @@
-from config import GROQ_MODEL, get_groq_client
+from groq import Groq
 
-def get_client():
-    return get_groq_client()
+from config import GROQ_API_KEY, GROQ_MODEL
+
+client = Groq(api_key=GROQ_API_KEY)
 
 
 def rewrite_query(question, history):
@@ -9,16 +10,12 @@ def rewrite_query(question, history):
     Rewrite vague or follow-up questions into
     standalone questions for better retrieval.
     """
-    client = get_client()
-    if not client:
-        return question
 
     conversation = ""
 
     for message in history:
-        if isinstance(message, dict) and "role" in message and "content" in message:
-            role = message["role"].capitalize()
-            conversation += f"{role}: {message['content']}\n"
+        role = message["role"].capitalize()
+        conversation += f"{role}: {message['content']}\n"
 
     prompt = f"""
 You are a Query Rewriting Assistant for a Retrieval-Augmented Generation (RAG) system.
@@ -57,25 +54,21 @@ Current Question:
 Rewritten Question:
 """
 
-    try:
-        response = client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ]
-        )
+    response = client.chat.completions.create(
+        model=GROQ_MODEL,
+        messages=[
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
+    )
 
-        rewritten = response.choices[0].message.content.strip()
+    rewritten = response.choices[0].message.content.strip()
 
-        print("\n========== QUERY REWRITE ==========")
-        print("Original :", question)
-        print("Rewritten:", rewritten)
-        print("===================================\n")
+    print("\n========== QUERY REWRITE ==========")
+    print("Original :", question)
+    print("Rewritten:", rewritten)
+    print("===================================\n")
 
-        return rewritten
-    except Exception as e:
-        print(f"Query rewrite fallback: {e}")
-        return question
+    return rewritten

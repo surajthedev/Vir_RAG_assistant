@@ -1,227 +1,184 @@
-import os
-import sys
+﻿"""
+routes/chat.py -- Vir Chat Endpoint (Agentic Architecture)
+
+Flow:
+  1. Fast-path check (lightweight classifier for obvious cases)
+  2. Full agentic loop (model decides which tools to call)
+
+The old hard-coded LOOKUP / COMPUTE / HYBRID 3-branch router has been replaced
+by a single agent loop (services/agent.py) where the Groq LLM reasons about
+which tools (vector_search, sql_query, map tools) to call.
+"""
+
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from services.router import route_question
+from services.agent import run_agent
+from services.agent_tools import AGENT_TOOL_DEFINITIONS, execute_agent_tool
+from services.fast_path import fast_path
 from services.sql_engine import run_sql
-from services.retriever import retrieve_context
-from services.vectordb import search_embeddings
-from services.embeddings import generate_query_embedding
-from services.prompt_builder import build_prompt
-from services.llm import generate_response
 from services.followups import generate_followup_questions
-from services.question_classifier import classify_question
-from services.query_classifier import needs_query_rewrite
-from services.query_rewriter import rewrite_query
-from services.nav_intent import is_navigation_query
-from services.tool_caller import generate_with_tools
-from config import UPLOAD_FOLDER
+from services.llm import generate_response
+from services.map_tools import TOOL_DEFINITIONS as MAP_TOOL_DEFINITIONS, execute_tool as execute_map_tool
+from services.session_store import load_history, save_exchange
+
+import json
+from groq import Groq
+from config import GROQ_API_KEY, GROQ_MODEL
 
 router = APIRouter()
+_client = Groq(api_key=GROQ_API_KEY)
 
-_NAV_SYSTEM_PROMPT = """You are Vir, an intelligent campus assistant for
+
+# ?? Fast-Path Handlers ?????????????????????????????????????????????????????????
+
+def _handle_sql_only(question: str) -> str:
+    """Direct SQL lookup for obvious queries (e.g., bare reg numbers)."""
+    result = run_sql(question=question)
+    if result.get("error"):
+        return f"I tried to look that up but encountered a database error: {result['error']}"
+    rows = result.get("rows", [])
+    if not rows:
+        return "I couldn't find any matching records in the database."
+    rows_text = "\n".join(", ".join(f"{k}: {v}" for k, v in row.items()) for row in rows)
+    format_prompt = (
+        f"You are Vir, an AI campus assistant.\n\n"
+        f"A database query was run for: {question}\n\n"
+        f"Result:\n{rows_text}\n\n"
+        f"Write a clear, concise natural-language answer. Do NOT mention SQL. Be direct."
+    )
+    return generate_response(format_prompt)
+
+
+_MAP_ONLY_SYSTEM_PROMPT = """You are Vir, an intelligent campus assistant for
 P.T. Lee Chengalvaraya Naicker College of Engineering and Technology.
 
-You help students, staff, and visitors navigate the college campus.
-
-You have access to these tools:
-- find_path(source, destination): Get shortest route + step-by-step directions between any two rooms/locations.
-- list_rooms(query): Search for rooms, labs, offices, or facilities by name or category.
+Answer navigation questions using these tools:
+- find_path(source, destination): Get shortest route + step-by-step directions.
+- list_rooms(query): Search for rooms, labs, offices, or facilities.
 - get_room_info(room_id): Get details about a specific room.
 
-RULES:
-- Always call the appropriate tool to answer navigation questions -- never guess or invent room locations.
-- Present directions in a clear, friendly, step-by-step format.
-- If the user asks where they are or where to go, guide them politely.
-- If a room is not found, suggest similar alternatives using list_rooms.
-- Keep responses concise, clear, and helpful.
+Always call the appropriate tool. Present directions clearly and concisely.
 """
 
 
+def _handle_map_only(question: str, history: list) -> str:
+    """Pure navigation queries using only map tools."""
+    messages = [{"role": "system", "content": _MAP_ONLY_SYSTEM_PROMPT}]
+    for msg in history[-4:]:
+        if isinstance(msg, dict) and msg.get("role") in ("user", "assistant") and msg.get("content"):
+            messages.append({"role": msg["role"], "content": msg["content"]})
+    messages.append({"role": "user", "content": question})
+
+    for _ in range(5):
+        response = _client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=messages,
+            tools=MAP_TOOL_DEFINITIONS,
+            tool_choice="auto",
+            temperature=0.2,
+        )
+        msg = response.choices[0].message
+        if not msg.tool_calls:
+            return msg.content or ""
+        messages.append({
+            "role": "assistant",
+            "content": msg.content,
+            "tool_calls": [{"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments}} for tc in msg.tool_calls],
+        })
+        for tc in msg.tool_calls:
+            messages.append({"role": "tool", "tool_call_id": tc.id, "content": execute_map_tool(tc.function.name, tc.function.arguments)})
+
+    return "I was unable to complete the navigation query. Please try rephrasing."
+
+
+# ?? Chat Request Model ?????????????????????????????????????????????????????????
+
 class ChatRequest(BaseModel):
     question: str
-    filename: str = ""
+    filename: str = ""       # kept for API compatibility; agent searches all docs
     history: list = []
+    session_id: str = ""     # optional persistent session ID for multi-turn memory
 
+
+# ?? Chat Endpoint ??????????????????????????????????????????????????????????????
 
 @router.post("/chat")
 async def chat(request: ChatRequest):
-    try:
-        # ------------------------------------
-        # 1. Detect Navigation Intent
-        # ------------------------------------
-        if is_navigation_query(request.question):
-            print(f"\n[Chat] Navigation intent detected -> using Map MCP Tools")
-            answer = generate_with_tools(
-                system_prompt=_NAV_SYSTEM_PROMPT,
-                user_message=request.question,
-                history=request.history,
-            )
-            followups = generate_followup_questions(
-                question=request.question,
-                answer=answer,
-            )
-            return {
-                "question": request.question,
-                "answer": answer,
-                "followups": followups,
-                "source": "navigation",
-                "sources": ["Campus Map Graph"],
-            }
+    question = request.question.strip()
+    session_id = request.session_id.strip()
 
-        # ------------------------------------
-        # 2. Smart 3-Way Query Router
-        # ------------------------------------
-        intent = route_question(request.question)
-        print(f"\n[Chat] Query: {request.question!r} | Intent: {intent}")
+    # ?? Load history: session store takes priority over inline history ?????????
+    if session_id:
+        history = load_history(session_id)
+        print(f"[Chat] Session {session_id[:8]}? -- loaded {len(history)} turns from store")
+    else:
+        history = request.history
 
-        # ------------------------------------
-        # Branch A: COMPUTE (In-Memory SQL Analytics)
-        # ------------------------------------
-        if intent == "COMPUTE":
-            sql_result = run_sql(request.question, request.filename if request.filename else None)
-            rows = sql_result.get("rows", [])
-            sql_query = sql_result.get("sql", "")
+    # ??????????????????????????????????????????????????????????????????????????
+    # Fast-Path: handle obvious queries without the full agent loop
+    # ??????????????????????????????????????????????????????????????????????????
 
-            if rows and not sql_result.get("error"):
-                rows_formatted = "\n".join(
-                    ", ".join(f"{k}: {v}" for k, v in row.items())
-                    for row in rows[:15]
-                )
-                fmt_prompt = f"""You are Vir, the official AI assistant for P.T. Lee Chengalvaraya Naicker College of Engineering and Technology.
-Answer the user's question directly, clearly, and factually using ONLY the verified database query result below.
+    path = fast_path(question)
 
-Rules:
-1. Provide the exact answer factually without showing raw SQL or mentioning internal database table names.
-2. If multiple records are returned, list them cleanly with bullet points.
-3. Be conversational, polite, and helpful.
-
-Question: {request.question}
-Data:
-{rows_formatted}
-
-Answer:"""
-                answer = generate_response(fmt_prompt)
-                followups = generate_followup_questions(question=request.question, answer=answer)
-                return {
-                    "question": request.question,
-                    "answer": answer,
-                    "followups": followups,
-                    "source": "database",
-                    "sources": ["College Academic Database"],
-                }
-
-        # ------------------------------------
-        # Branch B: HYBRID (SQL + Semantic Context)
-        # ------------------------------------
-        if intent == "HYBRID":
-            sql_result = run_sql(request.question, request.filename if request.filename else None)
-            sql_summary = str(sql_result.get("rows", "")) if sql_result.get("rows") else ""
-            
-            context = retrieve_context(
-                question=request.question,
-                filename=request.filename if request.filename else None,
-                question_type="general"
-            )
-            
-            merge_prompt = f"""You are Vir, the AI campus assistant for P.T. Lee Chengalvaraya Naicker College of Engineering and Technology.
-Synthesize a comprehensive, accurate answer to the user's question using both the database records and document knowledge context.
-
-Database Record:
-{sql_summary}
-
-Document Context:
-{context[:2000]}
-
-Question: {request.question}
-
-Answer:"""
-            answer = generate_response(merge_prompt)
-            followups = generate_followup_questions(question=request.question, answer=answer)
-            return {
-                "question": request.question,
-                "answer": answer,
-                "followups": followups,
-                "source": "hybrid",
-                "sources": ["College Database", "Knowledge Base"],
-            }
-
-        # ------------------------------------
-        # Branch C: LOOKUP (Semantic Document RAG)
-        # ------------------------------------
-        question_type = classify_question(request.question)
-        
-        # Query rewriting if multi-turn history exists
-        if needs_query_rewrite(request.question) and request.history:
-            retrieval_query = rewrite_query(
-                question=request.question,
-                history=request.history,
-            )
-        else:
-            retrieval_query = request.question
-
-        # Retrieve relevant context with vector search & entity re-ranking
-        context = retrieve_context(
-            question=retrieval_query,
-            filename=request.filename if request.filename else None,
-            question_type=question_type,
-            max_chars=6000
-        )
-
-        uploaded_files = os.listdir(UPLOAD_FOLDER) if os.path.exists(UPLOAD_FOLDER) else []
-        has_files = len(uploaded_files) > 0
-
-        if not context or not context.strip():
-            if not has_files:
-                return {
-                    "question": request.question,
-                    "answer": "No documents are currently indexed in the Knowledge Base. You can upload PDFs, Excel, Word documents, or CSVs via the **Knowledge Base** page (`/knowledge-base`).",
-                    "followups": ["How do I upload documents?", "What formats are supported?"],
-                    "source": "document",
-                    "sources": [],
-                }
-            else:
-                return {
-                    "question": request.question,
-                    "answer": "I couldn't find that specific information in the college knowledge base. Please contact the college administration or department office for the latest details.",
-                    "followups": ["What courses are offered?", "What departments are available?", "Tell me about placements."],
-                    "source": "document",
-                    "sources": [],
-                }
-
-        # Build Grounded Prompt
-        prompt = build_prompt(
-            context=context,
-            question=request.question,
-            history=request.history,
-            question_type=question_type,
-        )
-
-        # Generate Grounded LLM Response
-        answer = generate_response(prompt)
-
-        # Generate Follow-up Questions
-        followups = generate_followup_questions(
-            question=request.question,
-            answer=answer,
-        )
-
+    if path == "sql_only":
+        print(f"\n[Chat] Fast-path: sql_only")
+        answer = _handle_sql_only(question)
+        followups = generate_followup_questions(question=question, answer=answer)
+        if session_id:
+            save_exchange(session_id, question, answer)
         return {
-            "question": request.question,
+            "question": question,
             "answer": answer,
             "followups": followups,
-            "source": "document",
-            "sources": ["College Knowledge Base"],
+            "source": "fast_path_sql",
+            "session_id": session_id,
+            "debug": {"path": "sql_only"},
         }
 
-    except Exception as e:
-        print(f"[Chat Endpoint Error]: {e}")
+    if path == "map_only":
+        print(f"\n[Chat] Fast-path: map_only")
+        answer = _handle_map_only(question, history)
+        followups = generate_followup_questions(question=question, answer=answer)
+        if session_id:
+            save_exchange(session_id, question, answer)
         return {
-            "question": request.question,
-            "answer": f"I encountered an issue processing your request: {e}. Please try asking again.",
-            "followups": ["What courses are offered?", "Where is the IT Lab?"],
-            "source": "error",
-            "sources": [],
+            "question": question,
+            "answer": answer,
+            "followups": followups,
+            "source": "fast_path_map",
+            "session_id": session_id,
+            "debug": {"path": "map_only"},
         }
+
+    # ??????????????????????????????????????????????????????????????????????????
+    # Full Agentic Loop: model decides which tools to use
+    # ??????????????????????????????????????????????????????????????????????????
+
+    print(f"\n[Chat] Agentic loop for: {question[:80]}")
+
+    result = run_agent(question=question, history=history)
+
+    answer = result["answer"]
+    tools_used = result["tools_used"]
+    rounds = result["rounds"]
+
+    if session_id:
+        save_exchange(session_id, question, answer)
+
+    followups = generate_followup_questions(question=question, answer=answer)
+
+    print(f"[Chat] Tools used: {tools_used} | Rounds: {rounds}")
+
+    return {
+        "question": question,
+        "answer": answer,
+        "followups": followups,
+        "source": "agent",
+        "session_id": session_id,
+        "debug": {
+            "tools_used": tools_used,
+            "rounds": rounds,
+        },
+    }
 

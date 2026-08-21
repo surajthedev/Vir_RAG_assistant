@@ -1,43 +1,66 @@
-from config import GROQ_MODEL, get_groq_client
+﻿"""
+services/llm.py -- Groq LLM wrapper with retry + backoff
 
-FALLBACK_MODELS = [
-    GROQ_MODEL,
-    "groq/compound",
-    "groq/compound-mini",
-    "openai/gpt-oss-120b",
-    "qwen/qwen3.6-27b",
-    "openai/gpt-oss-20b",
-]
+Retries on:
+  - 429 Rate limit
+  - 500/502/503/504 server errors
+  - Connection errors / timeouts
+"""
+
+import logging
+from groq import Groq, RateLimitError, APIStatusError, APIConnectionError, APITimeoutError
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception,
+    before_sleep_log,
+)
+
+from config import GROQ_API_KEY, GROQ_MODEL
+
+logger = logging.getLogger(__name__)
+
+client = Groq(api_key=GROQ_API_KEY)
+
+_GROQ_RETRYABLE = (RateLimitError, APIConnectionError, APITimeoutError)
 
 
-def get_client():
-    return get_groq_client()
+def _is_groq_retryable(exc: BaseException) -> bool:
+    if isinstance(exc, _GROQ_RETRYABLE):
+        return True
+    if isinstance(exc, APIStatusError):
+        return exc.status_code in (500, 502, 503, 504)
+    return False
 
 
-def generate_response(prompt):
-    client = get_client()
-    if not client:
-        return "Error: Groq client is not initialized. Please check your GROQ_API_KEY in .env."
+@retry(
+    retry=retry_if_exception(_is_groq_retryable),
+    stop=stop_after_attempt(4),
+    wait=wait_exponential(multiplier=1, min=2, max=20),
+    before_sleep=before_sleep_log(logger, logging.WARNING),
+    reraise=True,
+)
+def generate_response(prompt: str) -> str:
+    """
+    Generate a response from Groq LLM.
+    Retries up to 4 times on rate-limit or server errors with exponential backoff.
+    """
+    try:
+        completion = client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+        )
+        return completion.choices[0].message.content or ""
 
-    last_error = None
-    for model_name in FALLBACK_MODELS:
-        if not model_name:
-            continue
-        try:
-            completion = client.chat.completions.create(
-                model=model_name,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                temperature=0.2
-            )
-            return completion.choices[0].message.content
-        except Exception as e:
-            last_error = e
-            print(f"LLM model {model_name} failed: {e}. Trying next fallback...")
-            continue
+    except _GROQ_RETRYABLE:
+        raise  # tenacity will catch and retry
 
-    return f"Groq Generation Error: {last_error}"
+    except APIStatusError as e:
+        if e.status_code in (500, 502, 503, 504):
+            raise  # retryable
+        return f"Groq API Error ({e.status_code}): {e.message}"
+
+    except Exception as e:
+        return f"Groq Error: {e}"

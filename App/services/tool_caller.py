@@ -1,96 +1,109 @@
-"""
-Tool Caller — Groq MCP-style agentic tool-calling loop.
+﻿"""
+Tool Caller -- Groq MCP-style agentic tool-calling loop.
+
+Handles the full round-trip:
+  1. Send user message + tool definitions to Groq.
+  2. If Groq responds with tool_calls, execute each tool.
+  3. Send tool results back to Groq as tool messages.
+  4. Repeat until Groq produces a final text answer (no more tool calls).
+
+Usage:
+    from services.tool_caller import generate_with_tools
+    answer = generate_with_tools(system_prompt, user_message)
 """
 
 import json
+from groq import Groq
 
-from config import get_groq_client
+from config import GROQ_API_KEY, GROQ_MODEL
 from services.map_tools import TOOL_DEFINITIONS, execute_tool
 
-def get_client():
-    return get_groq_client()
+client = Groq(api_key=GROQ_API_KEY)
 
+# Maximum tool-calling rounds to prevent infinite loops
 MAX_TOOL_ROUNDS = 5
-
-FALLBACK_TOOL_MODELS = [
-    "openai/gpt-oss-120b",
-    "qwen/qwen3.6-27b",
-    "openai/gpt-oss-20b",
-]
 
 
 def generate_with_tools(system_prompt: str, user_message: str, history: list = None) -> str:
     """
-    Run the Groq tool-calling loop with multi-model fallback.
-    """
-    client = get_client()
-    if not client:
-        return "Campus navigation service is currently initializing. Please try again in a moment."
+    Run the Groq tool-calling loop.
 
+    Args:
+        system_prompt: System instructions for the model.
+        user_message:  The user's current question.
+        history:       Prior conversation messages (list of role/content dicts).
+
+    Returns:
+        The final assistant text answer as a string.
+    """
     if history is None:
         history = []
 
-    base_messages = [{"role": "system", "content": system_prompt}]
+    # Build the initial messages list
+    messages = [{"role": "system", "content": system_prompt}]
 
+    # Include recent conversation history (last 6 turns)
     for msg in history[-6:]:
         if isinstance(msg, dict) and "role" in msg and "content" in msg:
-            base_messages.append({"role": msg["role"], "content": msg["content"]})
+            messages.append({"role": msg["role"], "content": msg["content"]})
 
-    base_messages.append({"role": "user", "content": user_message})
+    # Append the current user question
+    messages.append({"role": "user", "content": user_message})
 
-    for model_name in FALLBACK_TOOL_MODELS:
-        messages = list(base_messages)
-        try:
-            for round_num in range(MAX_TOOL_ROUNDS):
-                print(f"\n[ToolCaller] Round {round_num + 1} -- sending {len(messages)} messages (model: {model_name})")
+    for round_num in range(MAX_TOOL_ROUNDS):
 
-                response = client.chat.completions.create(
-                    model=model_name,
-                    messages=messages,
-                    tools=TOOL_DEFINITIONS,
-                    tool_choice="auto",
-                    temperature=0.2,
-                )
+        print(f"\n[ToolCaller] Round {round_num + 1} -- sending {len(messages)} messages")
 
-                choice = response.choices[0]
-                message = choice.message
+        response = client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=messages,
+            tools=TOOL_DEFINITIONS,
+            tool_choice="auto",
+            temperature=0.2,
+        )
 
-                if not message.tool_calls:
-                    print("[ToolCaller] No tool calls -- returning final answer.")
-                    return message.content or ""
+        choice = response.choices[0]
+        message = choice.message
 
-                print(f"[ToolCaller] {len(message.tool_calls)} tool call(s) requested:")
-                for tc in message.tool_calls:
-                    print(f"  -> {tc.function.name}({tc.function.arguments})")
+        # No tool calls -> final answer reached
+        if not message.tool_calls:
+            print("[ToolCaller] No tool calls -- returning final answer.")
+            return message.content or ""
 
-                messages.append({
-                    "role": "assistant",
-                    "content": message.content,
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            },
-                        }
-                        for tc in message.tool_calls
-                    ],
-                })
+        # Log tool calls
+        print(f"[ToolCaller] {len(message.tool_calls)} tool call(s) requested:")
+        for tc in message.tool_calls:
+            print(f"  -> {tc.function.name}({tc.function.arguments})")
 
-                for tc in message.tool_calls:
-                    tool_result = execute_tool(tc.function.name, tc.function.arguments)
-                    print(f"[ToolCaller] Result for {tc.function.name}:\n{tool_result}\n")
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": tool_result,
-                    })
+        # Append assistant's tool-call message to history
+        messages.append({
+            "role": "assistant",
+            "content": message.content,
+            "tool_calls": [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                }
+                for tc in message.tool_calls
+            ],
+        })
 
-            return "I was unable to complete navigation after multiple attempts. Please try rephrasing your question."
-        except Exception as e:
-            print(f"[ToolCaller] Model {model_name} error: {e}. Trying fallback...")
-            continue
+        # Execute each tool and append results as tool messages
+        for tc in message.tool_calls:
+            tool_result = execute_tool(tc.function.name, tc.function.arguments)
 
-    return "Navigation assistance is temporarily unavailable. Please try again in a few moments."
+            print(f"[ToolCaller] Result for {tc.function.name}:\n{tool_result}\n")
+
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": tool_result,
+            })
+
+    # Safety fallback if loop exhausted
+    return "I was unable to complete navigation after multiple attempts. Please try rephrasing your question."
+

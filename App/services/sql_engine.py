@@ -1,5 +1,5 @@
-"""
-SQL Engine — The COMPUTE branch of the RAG pipeline.
+﻿"""
+SQL Engine -- The COMPUTE branch of the RAG pipeline.
 
 Executes natural-language questions against the unified SQLite database:
   App/data/app.db (Consolidated modular schema + views)
@@ -33,7 +33,7 @@ DB_PATH = os.path.join(APP_DIR, "data", "app.db")
 
 
 # ---------------------------------------------------------------------------
-# Schema Master Loader — Ultra-Compact (Column Names Only)
+# Schema Master Loader -- Ultra-Compact (Column Names Only)
 # ---------------------------------------------------------------------------
 
 def load_schema_context(conn: sqlite3.Connection, question: str = "") -> str:
@@ -140,30 +140,13 @@ def _load_csvs_into_sqlite(csv_paths: list) -> tuple:
     return conn, schema_text
 
 
-def _find_csv_paths(filename: str = None) -> list:
-    """Find matching CSV files in UPLOAD_FOLDER."""
-    if filename and not filename.endswith(".db"):
-        pattern = os.path.join(UPLOAD_FOLDER, f"*_{filename}")
-        matches = glob.glob(pattern)
-        if not matches:
-            direct = os.path.join(UPLOAD_FOLDER, filename)
-            if os.path.exists(direct):
-                matches = [direct]
-        return [m for m in matches if m.endswith(".csv")]
-    return glob.glob(os.path.join(UPLOAD_FOLDER, "*.csv"))
-
-
 def _extract_sql(text: str) -> str:
-    """Extract clean SELECT/WITH SQL statement from LLM response."""
-    if not text:
-        return ""
-    
     code_block = re.search(r"```(?:sql)?\s*([\s\S]*?)\s*```", text, re.IGNORECASE)
     if code_block:
         sql = code_block.group(1).strip()
     else:
-        select_match = re.search(r"\b(SELECT|WITH)\b[\s\S]+", text, re.IGNORECASE)
-        sql = select_match.group(0).strip() if select_match else text.strip()
+        select_match = re.search(r"(SELECT\b[\s\S]+)", text, re.IGNORECASE)
+        sql = select_match.group(1).strip() if select_match else text.strip()
 
     sql = re.sub(r";\s*$", "", sql).strip()
 
@@ -253,9 +236,30 @@ def _generate_sql(schema_text: str, question: str, previous_error: str = None, p
         raise RuntimeError(f"LLM SQL generation failed: {e}")
 
 
+
+# Regex that catches any destructive keyword anywhere in the SQL (blocks bypass tricks
+# like "WITH t AS (DELETE ...) SELECT ...").
+_DESTRUCTIVE_SQL_RE = re.compile(
+    r"\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|REPLACE"
+    r"|ATTACH|DETACH|VACUUM|REINDEX|ANALYZE"
+    r"|PRAGMA\s+(?!table_info|index_list|index_info|foreign_key_list|table_xinfo))\b",
+    re.IGNORECASE,
+)
+
+
 def _safe_execute(conn: sqlite3.Connection, sql: str) -> dict:
-    """Safely execute a SELECT or WITH query against SQLite."""
-    first_token = sql.strip().split()[0].upper() if sql.strip() else ""
+    """
+    Safely execute a SELECT or WITH ? SELECT query against SQLite.
+
+    Guards (layered):
+      1. First token must be SELECT or WITH.
+      2. Full SQL is scanned for any destructive keyword (blocks CTE bypass tricks).
+      3. Connection is put into query_only mode before execution.
+    """
+    stripped = sql.strip()
+
+    # Guard 1 -- first token
+    first_token = stripped.split()[0].upper() if stripped else ""
     if first_token not in ("SELECT", "WITH"):
         return {
             "sql": sql,
@@ -264,13 +268,25 @@ def _safe_execute(conn: sqlite3.Connection, sql: str) -> dict:
             "error": "Only SELECT queries are permitted.",
         }
 
+    # Guard 2 -- destructive keyword anywhere in the statement
+    if _DESTRUCTIVE_SQL_RE.search(stripped):
+        return {
+            "sql": sql,
+            "columns": [],
+            "rows": [],
+            "error": "Query contains a disallowed keyword and was blocked.",
+        }
+
     try:
-        cursor = conn.execute(sql)
+        # Guard 3 -- set read-only mode at the connection level
+        conn.execute("PRAGMA query_only = ON")
+        cursor = conn.execute(stripped)
         columns = [desc[0] for desc in cursor.description] if cursor.description else []
         rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
-        return {"sql": sql, "columns": columns, "rows": rows, "error": None}
+        return {"sql": stripped, "columns": columns, "rows": rows, "error": None}
     except sqlite3.Error as e:
-        return {"sql": sql, "columns": [], "rows": [], "error": str(e)}
+        return {"sql": stripped, "columns": [], "rows": [], "error": str(e)}
+
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +303,7 @@ def run_sql(question: str, filename: str = None, max_retries: int = 5) -> dict:
     print(f"Question : {question}")
     print(f"Filename : {filename or 'Consolidated SQLite (app.db)'}")
 
-    # ── Fast Check: Direct Zero-Token Regex ───────────────────────────────────
+    # ?? Fast Check: Direct Zero-Token Regex ???????????????????????????????????
     direct_sql = _try_direct_sql(question)
     if direct_sql and not filename:
         print(f"[SQLEngine] Direct SQL match: {direct_sql}")
@@ -305,7 +321,7 @@ def run_sql(question: str, filename: str = None, max_retries: int = 5) -> dict:
         print("================================\n")
         return result
 
-    # ── Case A: Custom CSV filename provided (legacy upload mode) ─────────────
+    # ?? Case A: Custom CSV filename provided (legacy upload mode) ?????????????
     if filename and not filename.endswith(".db"):
         pattern = os.path.join(UPLOAD_FOLDER, f"*_{filename}")
         matches = glob.glob(pattern)
@@ -339,7 +355,7 @@ def run_sql(question: str, filename: str = None, max_retries: int = 5) -> dict:
             print("================================\n")
             return result
 
-    # ── Case B: Primary Unified Database (app.db) ─────────────────────────────
+    # ?? Case B: Primary Unified Database (app.db) ?????????????????????????????
     if not os.path.exists(DB_PATH):
         import subprocess
         print("[SQLEngine] app.db not found, building via ingest_sqlite.py...")
@@ -381,3 +397,4 @@ def run_sql(question: str, filename: str = None, max_retries: int = 5) -> dict:
     print("================================\n")
 
     return result
+

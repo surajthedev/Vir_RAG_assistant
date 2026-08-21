@@ -1,4 +1,4 @@
-"""
+﻿"""
 Staff Location Intent Detector.
 
 Detects questions like:
@@ -8,8 +8,8 @@ Detects questions like:
   "Where does the principal sit?"
 
 These questions need a HYBRID path:
-  1. RAG  → find which room the person is in (from staff directory doc)
-  2. Tool → call find_path() to give walking directions to that room
+  1. RAG  -> find which room the person is in (from staff directory doc)
+  2. Tool -> call find_path() to give walking directions to that room
 """
 
 import re
@@ -27,7 +27,7 @@ _STAFF_PATTERNS = re.compile(
     r"|(find|reach|meet|see|locate) (prof|dr|mr|mrs|ms)\b"
     r"|how (do i|can i|to) (find|reach|meet|see) (prof|dr|mr|mrs|ms)\b"
     r"|how (do i|can i|to) (find|reach|meet|see) (the )?(hod|principal|director|warden|librarian|dean|faculty|professor|counsellor)\b"
-    # "where is the <staff-role>" — specific roles only, not rooms/facilities
+    # "where is the <staff-role>" -- specific roles only, not rooms/facilities
     r"|where (is|are) the (hod|principal|director|warden|librarian|counsellor|dean|class advisor|lab in[- ]?charge)\b"
     r"|hod of\b|head of department\b|class advisor\b|lab in[- ]?charge\b"
     # "find/meet/see the <role>"
@@ -45,3 +45,4 @@ def is_staff_query(question: str) -> bool:
     on campus (staff, faculty, HOD, principal, etc.)
     """
     return bool(_STAFF_PATTERNS.search(question))
+
