@@ -11,7 +11,7 @@ class SuggestionRequest(BaseModel):
     filename: str
 
 
-@router.post("/suggestions")
+@router.post("/suggestions") # we need to change this entirely
 async def get_suggestions(request: SuggestionRequest):
 
     preview = get_document_preview(

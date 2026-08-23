@@ -116,7 +116,7 @@ async def chat(request: ChatRequest):
         history = request.history
 
     # ──────────────────────────────────────────────────────────────────────────
-    # Fast-Path: handle obvious queries without the full agent loop
+    # Fast-Path: handle obvious queries without the full agent loop . no we need to chnge this into the model reading the request first 
     # ──────────────────────────────────────────────────────────────────────────
 
     path = fast_path(question)

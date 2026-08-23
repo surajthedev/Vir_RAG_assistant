@@ -46,7 +46,7 @@ def _groq_retryable(exc: BaseException) -> bool:
 )
 def _call_groq(client: Groq, messages: list, tools: list, stream: bool = False, **kwargs):
     """Single retried Groq API call — shared by agent rounds and final synthesis."""
-    return client.chat.completions.create(
+    return client.chat.completions.create( # i need to understand this code
         model=GROQ_MODEL,
         messages=messages,
         tools=tools if tools else None,
@@ -62,7 +62,7 @@ _client = Groq(api_key=GROQ_API_KEY)
 # Maximum reasoning rounds to prevent infinite loops
 MAX_ROUNDS = 6
 
-# ── System Prompt ──────────────────────────────────────────────────────────────
+# ── System Prompt and we might need to change this  ──────────────────────────────────────────────────────────────
 
 AGENT_SYSTEM_PROMPT = """You are Vir, the intelligent AI campus assistant for P.T. Lee Chengalvaraya Naicker College of Engineering and Technology (PT Lee CNCET).
 
@@ -126,7 +126,7 @@ def run_agent(question: str, history: list = None) -> dict:
     # Build initial message list
     messages = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]
 
-    # Include recent conversation history (last 6 turns)
+    # Include recent conversation history (last 6 turns) 
     for msg in history[-6:]:
         if isinstance(msg, dict) and msg.get("role") in ("user", "assistant") and msg.get("content"):
             messages.append({"role": msg["role"], "content": msg["content"]})
@@ -136,6 +136,9 @@ def run_agent(question: str, history: list = None) -> dict:
 
     tools_used = []
     rounds = 0
+    total_prompt_tokens = 0
+    total_completion_tokens = 0
+    total_tokens = 0
 
     print(f"\n{'='*60}")
     print(f"[Agent] Starting agentic loop for: {question[:100]}")
@@ -153,7 +156,22 @@ def run_agent(question: str, history: list = None) -> dict:
                 "answer": f"I encountered an error while processing your question: {e}",
                 "tools_used": tools_used,
                 "rounds": rounds,
+                "tokens": {
+                    "prompt_tokens": total_prompt_tokens,
+                    "completion_tokens": total_completion_tokens,
+                    "total_tokens": total_tokens,
+                },
             }
+
+        # Track token usage for this round
+        if hasattr(response, "usage") and response.usage:
+            p_tok = getattr(response.usage, "prompt_tokens", 0)
+            c_tok = getattr(response.usage, "completion_tokens", 0)
+            t_tok = getattr(response.usage, "total_tokens", 0) or (p_tok + c_tok)
+            total_prompt_tokens += p_tok
+            total_completion_tokens += c_tok
+            total_tokens += t_tok
+            print(f"[Agent] Round {round_num} Tokens: Prompt={p_tok:,} | Completion={c_tok:,} | Total={t_tok:,}")
 
         choice = response.choices[0]
         message = choice.message
@@ -163,11 +181,17 @@ def run_agent(question: str, history: list = None) -> dict:
             final_answer = message.content or ""
             print(f"[Agent] Final answer reached on round {round_num} ({len(final_answer)} chars)")
             print(f"[Agent] Tools used: {tools_used}")
+            print(f"[Agent] Total Query Tokens: {total_tokens:,} (Prompt: {total_prompt_tokens:,} | Completion: {total_completion_tokens:,})")
             print(f"{'='*60}\n")
             return {
                 "answer": final_answer,
                 "tools_used": tools_used,
                 "rounds": rounds,
+                "tokens": {
+                    "prompt_tokens": total_prompt_tokens,
+                    "completion_tokens": total_completion_tokens,
+                    "total_tokens": total_tokens,
+                },
             }
 
         # Log tool calls
@@ -217,15 +241,30 @@ def run_agent(question: str, history: list = None) -> dict:
 
     try:
         final_response = _call_groq(_client, messages, [], max_tokens=1024)
+        if hasattr(final_response, "usage") and final_response.usage:
+            p_tok = getattr(final_response.usage, "prompt_tokens", 0)
+            c_tok = getattr(final_response.usage, "completion_tokens", 0)
+            t_tok = getattr(final_response.usage, "total_tokens", 0) or (p_tok + c_tok)
+            total_prompt_tokens += p_tok
+            total_completion_tokens += c_tok
+            total_tokens += t_tok
+            print(f"[Agent] Final Synthesis Tokens: Prompt={p_tok:,} | Completion={c_tok:,} | Total={t_tok:,}")
+
         final_answer = final_response.choices[0].message.content or \
             "I was unable to produce a complete answer. Please try rephrasing your question."
     except Exception as e:
         final_answer = f"I encountered an error in the final synthesis step: {e}"
 
     print(f"[Agent] Synthesized answer ({len(final_answer)} chars)")
+    print(f"[Agent] Total Query Tokens: {total_tokens:,} (Prompt: {total_prompt_tokens:,} | Completion: {total_completion_tokens:,})")
     print(f"{'='*60}\n")
     return {
         "answer": final_answer,
         "tools_used": tools_used,
         "rounds": rounds,
+        "tokens": {
+            "prompt_tokens": total_prompt_tokens,
+            "completion_tokens": total_completion_tokens,
+            "total_tokens": total_tokens,
+        },
     }

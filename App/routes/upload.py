@@ -21,7 +21,6 @@ async def upload_document(file: UploadFile = File(...)):
     # ----------------------------------
     # Validate
     # ----------------------------------
-
     await validate_file(file)
 
     # ----------------------------------
@@ -72,10 +71,11 @@ async def upload_document(file: UploadFile = File(...)):
     # ----------------------------------
     # Generate Embeddings
     # ----------------------------------
-
+    
     embeddings = generate_document_embeddings(
     [chunk["text"] for chunk in chunks]
     )
+
     print("Chunks before store:", len(chunks))
     print("Embeddings before store:", len(embeddings))
 
@@ -89,6 +89,7 @@ async def upload_document(file: UploadFile = File(...)):
         filename=file.filename
     )
 
+
     # ----------------------------------
     # Response
     # ----------------------------------
@@ -101,3 +102,4 @@ async def upload_document(file: UploadFile = File(...)):
         "chunks_stored": total_stored,
         "suggested_questions": suggested_questions
     }
+

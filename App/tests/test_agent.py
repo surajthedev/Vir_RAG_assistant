@@ -73,35 +73,45 @@ class TestSQLQueries:
         assert_tool_called(result, "sql_query")
         assert_answer_not_empty(result)
         assert_no_error_in_answer(result)
+        tokens = result.get("tokens", {})
         print(f"\n[Test] Student lookup answer: {result['answer'][:200]}")
+        print(f"[Test] Tokens: Prompt={tokens.get('prompt_tokens', 0):,} | Completion={tokens.get('completion_tokens', 0):,} | Total={tokens.get('total_tokens', 0):,}")
 
     def test_average_attendance_query(self):
         result = run_agent("What is the average attendance percentage of IT department students?")
         assert_tool_called(result, "sql_query")
         assert_answer_not_empty(result)
         assert_no_error_in_answer(result)
+        tokens = result.get("tokens", {})
         print(f"\n[Test] Avg attendance answer: {result['answer'][:200]}")
+        print(f"[Test] Tokens: Prompt={tokens.get('prompt_tokens', 0):,} | Completion={tokens.get('completion_tokens', 0):,} | Total={tokens.get('total_tokens', 0):,}")
 
     def test_top_students_by_marks(self):
         result = run_agent("Who are the top 3 students by marks in the CSE department?")
         assert_tool_called(result, "sql_query")
         assert_answer_not_empty(result)
         assert_no_error_in_answer(result)
+        tokens = result.get("tokens", {})
         print(f"\n[Test] Top students answer: {result['answer'][:200]}")
+        print(f"[Test] Tokens: Prompt={tokens.get('prompt_tokens', 0):,} | Completion={tokens.get('completion_tokens', 0):,} | Total={tokens.get('total_tokens', 0):,}")
 
     def test_count_arrear_students(self):
         result = run_agent("How many students have arrears in the IT department?")
         assert_tool_called(result, "sql_query")
         assert_answer_not_empty(result)
         assert_no_error_in_answer(result)
+        tokens = result.get("tokens", {})
         print(f"\n[Test] Arrear count answer: {result['answer'][:200]}")
+        print(f"[Test] Tokens: Prompt={tokens.get('prompt_tokens', 0):,} | Completion={tokens.get('completion_tokens', 0):,} | Total={tokens.get('total_tokens', 0):,}")
 
     def test_faculty_info(self):
         result = run_agent("What is the cabin number and phone of faculty Divagaran?")
         assert_tool_called(result, "sql_query")
         assert_answer_not_empty(result)
         assert_no_error_in_answer(result)
+        tokens = result.get("tokens", {})
         print(f"\n[Test] Faculty info answer: {result['answer'][:200]}")
+        print(f"[Test] Tokens: Prompt={tokens.get('prompt_tokens', 0):,} | Completion={tokens.get('completion_tokens', 0):,} | Total={tokens.get('total_tokens', 0):,}")
 
 
 # ── Vector Search Tests ────────────────────────────────────────────────────────
@@ -114,35 +124,45 @@ class TestVectorSearchQueries:
         assert_tool_called(result, "vector_search")
         assert_answer_not_empty(result)
         assert_no_error_in_answer(result)
+        tokens = result.get("tokens", {})
         print(f"\n[Test] GPA formula answer: {result['answer'][:200]}")
+        print(f"[Test] Tokens: Prompt={tokens.get('prompt_tokens', 0):,} | Completion={tokens.get('completion_tokens', 0):,} | Total={tokens.get('total_tokens', 0):,}")
 
     def test_exam_pattern_question(self):
         result = run_agent("What is the exam pattern for Anna University undergraduate programs?")
         assert_tool_called(result, "vector_search")
         assert_answer_not_empty(result)
         assert_no_error_in_answer(result)
+        tokens = result.get("tokens", {})
         print(f"\n[Test] Exam pattern answer: {result['answer'][:200]}")
+        print(f"[Test] Tokens: Prompt={tokens.get('prompt_tokens', 0):,} | Completion={tokens.get('completion_tokens', 0):,} | Total={tokens.get('total_tokens', 0):,}")
 
     def test_attendance_policy(self):
         result = run_agent("What is the minimum attendance requirement for exam eligibility?")
         assert_tool_called(result, "vector_search")
         assert_answer_not_empty(result)
         assert_no_error_in_answer(result)
+        tokens = result.get("tokens", {})
         print(f"\n[Test] Attendance policy answer: {result['answer'][:200]}")
+        print(f"[Test] Tokens: Prompt={tokens.get('prompt_tokens', 0):,} | Completion={tokens.get('completion_tokens', 0):,} | Total={tokens.get('total_tokens', 0):,}")
 
     def test_admission_procedure(self):
         result = run_agent("What is the admission procedure for the college?")
         assert_tool_called(result, "vector_search")
         assert_answer_not_empty(result)
         assert_no_error_in_answer(result)
+        tokens = result.get("tokens", {})
         print(f"\n[Test] Admission procedure answer: {result['answer'][:200]}")
+        print(f"[Test] Tokens: Prompt={tokens.get('prompt_tokens', 0):,} | Completion={tokens.get('completion_tokens', 0):,} | Total={tokens.get('total_tokens', 0):,}")
 
     def test_transport_schedule(self):
         result = run_agent("What are the bus timings for the college transport?")
         assert_tool_called(result, "vector_search")
         assert_answer_not_empty(result)
         assert_no_error_in_answer(result)
+        tokens = result.get("tokens", {})
         print(f"\n[Test] Transport schedule answer: {result['answer'][:200]}")
+        print(f"[Test] Tokens: Prompt={tokens.get('prompt_tokens', 0):,} | Completion={tokens.get('completion_tokens', 0):,} | Total={tokens.get('total_tokens', 0):,}")
 
 
 # ── Hybrid Tests ───────────────────────────────────────────────────────────────
@@ -154,13 +174,14 @@ class TestHybridQueries:
         result = run_agent(
             "Find a student with arrears and explain what the regulation says about arrear clearance"
         )
-        # Should call both tools
         tools = result["tools_used"]
         assert "sql_query" in tools or "vector_search" in tools, \
             f"Expected at least one tool to be called, got: {tools}"
         assert_answer_not_empty(result)
         assert_no_error_in_answer(result)
+        tokens = result.get("tokens", {})
         print(f"\n[Test] Hybrid answer: {result['answer'][:300]}")
+        print(f"[Test] Tokens: Prompt={tokens.get('prompt_tokens', 0):,} | Completion={tokens.get('completion_tokens', 0):,} | Total={tokens.get('total_tokens', 0):,}")
 
     def test_performance_plus_formula(self):
         result = run_agent(
@@ -170,7 +191,9 @@ class TestHybridQueries:
         assert len(tools) >= 1, "Expected at least one tool"
         assert_answer_not_empty(result)
         assert_no_error_in_answer(result)
+        tokens = result.get("tokens", {})
         print(f"\n[Test] CGPA hybrid answer: {result['answer'][:300]}")
+        print(f"[Test] Tokens: Prompt={tokens.get('prompt_tokens', 0):,} | Completion={tokens.get('completion_tokens', 0):,} | Total={tokens.get('total_tokens', 0):,}")
 
 
 # ── SQL Security Tests ─────────────────────────────────────────────────────────
@@ -225,12 +248,12 @@ class TestSQLSecurity:
 
 
 if __name__ == "__main__":
-    # Quick manual run
+    # Quick manual run with token metrics
     import json
 
-    print("\n" + "="*60)
-    print("RUNNING QUICK ACCURACY CHECK")
-    print("="*60)
+    print("\n" + "="*70)
+    print("RUNNING QUICK ACCURACY & TOKEN USAGE CHECK")
+    print("="*70)
 
     test_questions = [
         ("SQL",    "How many students are in the IT department?"),
@@ -241,32 +264,66 @@ if __name__ == "__main__":
     ]
 
     results = []
+    total_suite_prompt = 0
+    total_suite_completion = 0
+    total_suite_tokens = 0
+
     for expected_type, q in test_questions:
         print(f"\n[Q] ({expected_type}) {q}")
         try:
             r = run_agent(q)
             tools = r["tools_used"]
+            toks = r.get("tokens", {})
+            p_tok = toks.get("prompt_tokens", 0)
+            c_tok = toks.get("completion_tokens", 0)
+            t_tok = toks.get("total_tokens", 0)
+
+            total_suite_prompt += p_tok
+            total_suite_completion += c_tok
+            total_suite_tokens += t_tok
+
             answer_preview = r["answer"][:150].replace("\n", " ")
-            print(f"    Tools used : {tools}")
-            print(f"    Rounds     : {r['rounds']}")
-            print(f"    Answer     : {answer_preview}...")
+            print(f"    Tools used     : {tools}")
+            print(f"    Rounds         : {r['rounds']}")
+            print(f"    Tokens (Prompt): {p_tok:,}")
+            print(f"    Tokens (Comp)  : {c_tok:,}")
+            print(f"    Tokens (Total) : {t_tok:,}")
+            print(f"    Answer Preview : {answer_preview}...")
+
             results.append({
                 "expected": expected_type,
                 "question": q,
                 "tools_used": tools,
                 "rounds": r["rounds"],
+                "prompt_tokens": p_tok,
+                "completion_tokens": c_tok,
+                "total_tokens": t_tok,
                 "answer_len": len(r["answer"]),
                 "ok": bool(r["answer"].strip()),
             })
         except Exception as e:
             print(f"    ERROR: {e}")
-            results.append({"question": q, "error": str(e), "ok": False})
+            results.append({"question": q, "error": str(e), "ok": False, "total_tokens": 0})
 
-    print("\n" + "="*60)
-    print("RESULTS SUMMARY")
-    print("="*60)
+    print("\n" + "="*70)
+    print("RESULTS & TOKEN CONSUMPTION SUMMARY")
+    print("="*70)
     passed = sum(1 for r in results if r.get("ok"))
-    print(f"Passed: {passed}/{len(results)}")
+    print(f"Tests Passed: {passed}/{len(results)}\n")
+    print(f"{'Status':<8} {'Type':<8} {'Rounds':<8} {'Prompt':<10} {'Comp':<8} {'Total':<10} {'Question'}")
+    print("-" * 70)
     for r in results:
-        status = "✅" if r.get("ok") else "❌"
-        print(f"  {status} [{r.get('expected','?')}] {r['question'][:60]} → tools={r.get('tools_used', 'ERROR')}")
+        status = "✅ PASS" if r.get("ok") else "❌ FAIL"
+        exp = r.get("expected", "?")
+        rounds = r.get("rounds", "-")
+        p = f"{r.get('prompt_tokens', 0):,}"
+        c = f"{r.get('completion_tokens', 0):,}"
+        tot = f"{r.get('total_tokens', 0):,}"
+        q_short = r["question"][:35] + ("..." if len(r["question"]) > 35 else "")
+        print(f"{status:<8} {exp:<8} {str(rounds):<8} {p:<10} {c:<8} {tot:<10} {q_short}")
+
+    print("-" * 70)
+    print(f"TOTAL SUITE TOKENS USED : {total_suite_tokens:,}")
+    print(f"  └─ Prompt Tokens      : {total_suite_prompt:,}")
+    print(f"  └─ Completion Tokens  : {total_suite_completion:,}")
+    print("="*70 + "\n")

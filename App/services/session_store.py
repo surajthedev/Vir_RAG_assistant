@@ -1,3 +1,5 @@
+# right now i don't need to have the session Memory 
+
 """
 services/session_store.py — Persistent Conversation Memory
 
@@ -41,19 +43,24 @@ def _get_conn() -> sqlite3.Connection:
 
 
 def load_history(session_id: str) -> list[dict]:
+
     """
     Load the conversation history for a session.
-    Returns a list of {role, content} dicts, ordered oldest first.
+    Returns a list of {role, content}  dicts, ordered oldest first.
     """
+    
     if not session_id:
         return []
     conn = _get_conn()
+    
     try:
         rows = conn.execute(
             "SELECT role, content FROM sessions WHERE session_id = ? ORDER BY turn_index ASC",
             (session_id,),
         ).fetchall()
+    
         return [{"role": row["role"], "content": row["content"]} for row in rows]
+    
     finally:
         conn.close()
 

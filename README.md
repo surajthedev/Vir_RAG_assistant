@@ -1,71 +1,74 @@
-# 🎓 Vir_RAG_assistant
+# 🎓 Vir — Agentic Campus AI Assistant & Indoor Navigation
 
-**Vir_RAG_assistant** is an intelligent hybrid AI campus assistant and indoor navigation system built for **P.T. Lee Chengalvaraya Naicker College of Engineering and Technology (PTLCNCET)**.
+**Vir** is an autonomous hybrid AI campus assistant and indoor navigation system built for **P.T. Lee Chengalvaraya Naicker College of Engineering and Technology (PTLCNCET)**.
 
-The system combines **Semantic Document RAG** with **In-Memory Tabular SQL Analytics** through an intelligent 3-way query router, alongside an **Indoor Campus Navigation Engine**.
+The system combines **Agentic Reasoning & Tool Calling**, **Semantic Document Retrieval (RAG)**, **Hardened SQL Analytics**, and an **Indoor Topological Campus Navigation Engine**.
 
 ---
 
 ## 🌟 Core Modules
 
-1. **📄 Hybrid Document & Tabular RAG Assistant (`App/`)**:
-   - **Smart 3-Way Router**: Classifies queries into **LOOKUP** (semantic search), **COMPUTE** (SQL analytics), or **HYBRID** (chained SQL + semantic retrieval).
-   - **Semantic Document RAG**: Dense vector search powered by **Jina AI Embeddings v3** and **Qdrant Vector Database** with entity-aware re-ranking.
-   - **Tabular SQL Engine**: Natural language to SQL query engine over in-memory SQLite tables created from student, faculty, marks, and attendance data.
-   - **Excel Batch Ingestion Engine**: Automatically parses complex, multi-sheet Excel files (`.xlsx`, `.xls`) with intelligent header detection into queryable CSVs and Qdrant vector chunks.
-   - **Accuracy & Trace Test Suite**: Automated test suite with 96%+ accuracy and granular layer-by-layer JSON trace logging.
+### 1. 📄 Agentic Document & Tabular Assistant (`App/`)
+- **Autonomous Agent Reasoning Loop**: Uses Groq LLM tool calling to dynamically plan, call tools in sequence, and synthesize answers:
+  - `vector_search`: Semantic search over academic regulations (R2021, R2025), admissions, prospectus, and transport schedules via **Qdrant** & **Jina AI Embeddings v3**.
+  - `sql_query`: Natural-language-to-SQL generation over structured student, marks, faculty, and attendance datasets in **SQLite** with a 3-layer security lockdown.
+  - `find_path`, `list_rooms`, `get_room_info`: Direct integration with indoor campus navigation.
+- **Resilience & Production Hardening**:
+  - `tenacity` retry with exponential backoff on Groq and Jina APIs (handles 429 rate limits and 5xx errors).
+  - 100-chunk batching for Jina embeddings and 50-point batching for Qdrant upserts.
+  - Transparent **Source Citations** extracted directly from vector document metadata.
+  - Persistent **Multi-Turn Session Memory** stored in SQLite.
+- **Interactive UI**: Streamlit web chat with simulated token streaming (`st.write_stream`), debug badges, and dynamic follow-up suggestions.
 
-2. **🗺️ Indoor Campus Navigation Engine (`APP/Map/`)**:
-   - Topological multi-floor campus graph representing rooms, laboratories, stairs, and corridors.
-   - Dijkstra's shortest-path algorithm producing turn-by-turn walking directions between any two campus locations.
+### 2. 🗺️ Indoor Campus Navigation Engine (`APP/Map/`)
+- **Topological Campus Graph**: Multi-floor representation of classrooms, labs, faculty rooms, stairs, corridors, and amenities.
+- **Shortest Path Routing**: Dijkstra-powered pathfinding returning step-by-step walking instructions and distance estimates.
 
 ---
 
 ## 🏗️ System Architecture
 
 ```
-                               ┌─────────────────────────────┐
-                               │   User Question (Natural)   │
-                               └──────────────┬──────────────┘
-                                              │
-                                              ▼
-                               ┌─────────────────────────────┐
-                               │    Query Router Classifier   │
-                               │    (services/router.py)     │
-                               └───────┬──────┬──────┬───────┘
-                                       │      │      │
-                      ┌────────────────┘      │      └────────────────┐
-                      ▼                       ▼                       ▼
-            ┌───────────────────┐   ┌───────────────────┐   ┌───────────────────┐
-            │   LOOKUP Branch   │   │  COMPUTE Branch   │   │   HYBRID Branch   │
-            │ (Semantic Search) │   │  (SQL Analytics)  │   │  (Chained SQL+RAG)│
-            └─────────┬─────────┘   └─────────┬─────────┘   └─────────┬─────────┘
-                      │                       │                       │
-                      ▼                       ▼                       ▼
-            ┌───────────────────┐   ┌───────────────────┐   ┌───────────────────┐
-            │  Jina v3 Vectors  │   │ Select Top Tables │   │ Step 1: SQL Query │
-            │  (1024-dim dense) │   │  (Keyword-Ranked) │   │ (Aggregate/Filter)│
-            └─────────┬─────────┘   └─────────┬─────────┘   └─────────┬─────────┘
-                      │                       │                       │
-                      ▼                       ▼                       ▼
-            ┌───────────────────┐   ┌───────────────────┐   ┌───────────────────┐
-            │  Qdrant Vector DB │   │ In-Memory SQLite  │   │ Step 2: Vector DB │
-            │ (Cosine Distance) │   │ (Groq SQL Select) │   │ (Context Lookup)  │
-            └─────────┬─────────┘   └─────────┬─────────┘   └─────────┬─────────┘
-                      │                       │                       │
-                      ▼                       ▼                       ▼
-            ┌───────────────────┐   ┌───────────────────┐   ┌───────────────────┐
-            │ Entity Re-ranker  │   │ Execute & Format  │   │ Synthesize Answer │
-            │ (Token Priority)  │   │ (Structured Dict) │   │ (SQL + Documents) │
-            └─────────┬─────────┘   └─────────┬─────────┘   └─────────┬─────────┘
-                      │                       │                       │
-                      └───────────────────────┼───────────────────────┘
-                                              │
-                                              ▼
-                               ┌─────────────────────────────┐
-                               │  Groq LLM Response Engine   │
-                               │  (Natural Language Output)  │
-                               └─────────────────────────────┘
+                                  User Prompt / Chat Query
+                                             │
+                                             ▼
+                                   FastAPI (POST /chat)
+                                             │
+                                             ▼
+                                  ┌────────────────────┐
+                                  │   fast_path.py     │
+                                  │ (Regex Classifier) │
+                                  └──────────┬─────────┘
+                                             │
+                     ┌───────────────────────┴───────────────────────┐
+                     ▼ (Bare RegNo / Direct Nav)                     ▼ (Complex / General)
+           ┌───────────────────┐                           ┌───────────────────┐
+           │ Fast-Path Direct  │                           │   Agentic Loop    │
+           │ (SQL / Nav Route) │                           │(services/agent.py)│
+           └─────────┬─────────┘                           └─────────┬─────────┘
+                     │                                               │
+                     │               ┌───────────────────────────────┴───────────────────────────────┐
+                     │               ▼                               ▼                               ▼
+                     │      ┌─────────────────┐             ┌─────────────────┐             ┌─────────────────┐
+                     │      │  vector_search  │             │    sql_query    │             │ Navigation Tools│
+                     │      │(Qdrant + Jina v3│             │ (SQLite app.db) │             │ (Campus Graph)  │
+                     │      └────────┬────────┘             └────────┬────────┘             └────────┬────────┘
+                     │               │                               │                               │
+                     │               └───────────────────────┬───────┴───────────────────────────────┘
+                     │                                       │ (Tool Outputs / Multi-Round)
+                     │                                       ▼
+                     │                            ┌─────────────────────┐
+                     │                            │   Final Synthesis   │
+                     │                            │      (Groq LLM)     │
+                     │                            └──────────┬──────────┘
+                     │                                       │
+                     └───────────────────────┬───────────────┘
+                                             │
+                                             ▼
+                              ┌─────────────────────────────┐
+                              │ Response with Citations,    │
+                              │ Follow-ups & Session Memory │
+                              └─────────────────────────────┘
 ```
 
 ---
@@ -74,36 +77,37 @@ The system combines **Semantic Document RAG** with **In-Memory Tabular SQL Analy
 
 ```
 Vir_RAG_assistant/
-├── App/                         # Document & Tabular RAG System
-│   ├── data/                    # Ingested CSVs & local vector database
-│   │   └── uploads/             # Standardized tabular CSV data files
-│   ├── routes/                  # FastAPI endpoints (/upload, /chat, /suggestions)
-│   ├── services/                # Core architecture services:
-│   │   ├── router.py            # 3-way query classifier (LOOKUP / COMPUTE / HYBRID)
-│   │   ├── sql_engine.py        # In-memory SQLite generator & executor
-│   │   ├── retriever.py         # Qdrant retrieval + entity-aware re-ranking
-│   │   ├── embeddings.py        # Jina AI Embeddings v3 client
-│   │   ├── vectordb.py          # Qdrant client & vector collection operations
-│   │   ├── prompt_builder.py    # Structured prompt generator for document & tabular RAG
-│   │   ├── llm.py               # Groq LLM client wrapper
-│   │   ├── extractor.py         # Multi-format document extractor (PDF/DOCX/TXT/CSV)
-│   │   └── chunker.py           # Text splitter with section and page tracking
-│   ├── tests/                   # Accuracy verification test suite
-│   │   ├── test_rag_accuracy.py # End-to-end multi-layer test suite
-│   │   └── last_run_trace.json  # Full JSON execution trace of the last test run
-│   ├── ingest_excel.py          # Batch ingestion script for Excel datasets
-│   ├── app.py                   # Streamlit web user interface
+├── App/                         # Core Agentic RAG Application
+│   ├── data/                    # Consolidated databases & local vector fallback
+│   │   ├── app.db               # Normalized SQLite database (students, marks, faculty)
+│   │   └── sessions.db          # Persistent conversation history per session
+│   ├── routes/                  # FastAPI endpoints (/chat, /upload, /suggestions)
+│   ├── services/                # Backend intelligence services:
+│   │   ├── agent.py             # Agent reasoning loop & multi-round dispatcher
+│   │   ├── agent_tools.py       # Tool definitions & execution wrapper with citations
+│   │   ├── fast_path.py         # Sub-millisecond regex classifier for instant lookups
+│   │   ├── session_store.py     # SQLite session store for multi-turn conversational context
+│   │   ├── sql_engine.py        # 3-layer hardened SQL generator & executor
+│   │   ├── retriever.py         # Dense vector retrieval & context budget assembly
+│   │   ├── embeddings.py        # Jina AI Embeddings v3 with batching & retries
+│   │   ├── vectordb.py          # Qdrant client & batched point upserts
+│   │   ├── llm.py               # Retried Groq LLM API wrapper
+│   │   └── map_tools.py         # Navigation tool wrappers for the agent
+│   ├── tests/                   # Test suites
+│   │   └── test_agent.py        # Pytest unit tests & accuracy verification suite
+│   ├── ingest_sqlite.py         # SQLite ETL builder with automated attendance calculations
+│   ├── ingest_pdfs.py           # Batch PDF extractor & vector indexer
+│   ├── app.py                   # Streamlit conversational web UI
 │   ├── main.py                  # FastAPI REST backend server
-│   ├── config.py                # App configuration & environment loader
-│   ├── requirements.txt         # Project dependencies
+│   ├── config.py                # Environment configuration loader
+│   ├── requirements.txt         # Python dependencies
 │   └── README.md                # Detailed App module documentation
 │
 ├── APP/Map/                     # Indoor Campus Navigation System
-│   ├── college_graph.json       # Campus topological graph (rooms, labs, stairs)
+│   ├── college_graph.json       # Multi-floor campus topological graph
 │   └── navigate.py              # Dijkstra shortest path navigation engine
 │
-├── DATA/                        # Source campus datasets (Academics, Student, Marks, Attendance)
-├── CONTRIBUTING.md              # Contribution guidelines
+├── DATA/                        # Source campus datasets (Academic Excel sheets & documents)
 └── README.md                    # Root project documentation
 ```
 
@@ -122,58 +126,57 @@ pip install -r requirements.txt
 
 ### 2. Configure Environment Variables (`App/.env`)
 
-Create or update `App/.env`:
-
 ```env
 GROQ_API_KEY=your_groq_api_key
 GROQ_MODEL=openai/gpt-oss-20b
 JINA_API_KEY=your_jina_api_key
-QDRANT_URL=https://your-cluster.qdrant.io  # Optional: falls back to local disk if omitted
+QDRANT_URL=https://your-cluster.qdrant.io   # Optional: local fallback if omitted
 QDRANT_API_KEY=your_qdrant_api_key
 ```
 
-### 3. Ingest Campus Data (Optional / Batch Mode)
-
-If you have fresh Excel files in `DATA/`:
+### 3. Ingest Campus Data
 
 ```bash
-cd App
-python ingest_excel.py
+# Ingest Excel sheets into normalized SQLite database:
+python ingest_sqlite.py
+
+# Ingest all regulation PDFs & documents into Qdrant vector database:
+python ingest_pdfs.py
 ```
 
-### 4. Run the Accuracy Test Suite
-
-Verify all pipeline layers and inspect execution logs:
+### 4. Run Verification Tests
 
 ```bash
-cd App
-python tests/test_rag_accuracy.py
+# Run unit tests (Fast-path + 3-layer SQL Security):
+python -m pytest tests/test_agent.py::TestFastPath tests/test_agent.py::TestSQLSecurity -v
+
+# Run full live conversational accuracy test suite:
+python tests/test_agent.py
 ```
 
-### 5. Start Backend and Frontend
+### 5. Start Backend and Web UI
 
-* **FastAPI Backend**:
-  ```bash
-  uvicorn main:app --host 127.0.0.1 --port 8000 --reload
-  ```
-  API Docs: `http://127.0.0.1:8000/docs`
+```bash
+# Terminal 1 — Start FastAPI Backend:
+uvicorn main:app --reload --port 8000
 
-* **Streamlit Web UI**:
-  ```bash
-  streamlit run app.py
-  ```
-  Web UI: `http://localhost:8501`
+# Terminal 2 — Start Streamlit Web UI:
+streamlit run app.py
+```
+
+- **Web Chat UI**: `http://localhost:8501`
+- **FastAPI Interactive Docs**: `http://127.0.0.1:8000/docs`
 
 ---
 
-## 🗺️ Indoor Campus Navigation (`APP/Map/`)
+## 🗺️ CLI Campus Navigation (`APP/Map/`)
 
-Compute turn-by-turn directions between classrooms, departments, or facilities:
+You can also run standalone turn-by-turn pathfinding from the terminal:
 
 ```bash
 cd APP/Map
 python navigate.py "G09" "F17"
-# Or search by facility name:
+# Or search by landmark / department:
 python navigate.py "Canteen" "ECE - IV Year"
 ```
 
@@ -183,17 +186,18 @@ python navigate.py "Canteen" "ECE - IV Year"
 
 | Layer | Technology | Purpose |
 |---|---|---|
-| **LLM Engine** | Groq Cloud API (`openai/gpt-oss-20b` / `llama-3.3-70b-versatile`) | Fast, high-throughput text & SQL generation |
-| **Embeddings** | Jina AI (`jina-embeddings-v3`) | 1024-dimensional dense semantic vectors |
-| **Vector DB** | Qdrant | Cloud & local disk vector similarity search |
-| **SQL Engine** | In-Memory SQLite | Instant SQL computation on tabular datasets |
-| **Backend** | FastAPI + Uvicorn | High-performance asynchronous REST API |
-| **Frontend** | Streamlit | Interactive conversational chat UI |
-| **Data Parsing** | `openpyxl`, `xlrd`, `pandas`, `PyMuPDF`, `python-docx` | Robust multi-format document extraction |
-| **Pathfinding** | Dijkstra's Graph Algorithm | Multi-floor indoor campus shortest path navigation |
+| **Agent Reasoning** | Groq API (`openai/gpt-oss-20b` / `llama-3.3-70b-versatile`) | Autonomous tool calling, planning, and natural synthesis |
+| **Embeddings** | Jina AI (`jina-embeddings-v3`) | 1024-d dense vector embeddings with batching & retries |
+| **Vector Store** | Qdrant Cloud / Local | Scalable cosine similarity vector search |
+| **Relational DB** | SQLite (`data/app.db`) | Structured student records, marks, attendance, and analytics views |
+| **Session Memory** | SQLite (`data/sessions.db`) | Persistent multi-turn conversation memory per session UUID |
+| **Reliability** | `tenacity` | Exponential backoff retry on API rate limits and network errors |
+| **REST API** | FastAPI + Uvicorn | High-performance asynchronous backend |
+| **Web UI** | Streamlit | Chat interface with simulated token streaming |
+| **Pathfinding** | Dijkstra Algorithm | Multi-floor indoor campus shortest path navigation |
 
 ---
 
 ## 📄 License
 
-This project is developed for educational and institutional assistance at PTLCNCET.
+Developed for educational and institutional assistance at **P.T. Lee Chengalvaraya Naicker College of Engineering and Technology (PTLCNCET)**.

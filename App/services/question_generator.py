@@ -5,7 +5,7 @@ from config import GROQ_API_KEY, GROQ_MODEL
 client = Groq(api_key=GROQ_API_KEY)
 
 
-def generate_suggested_questions(text):
+def generate_suggested_questions(text): #we need to change the generate the followup and change the prompt
 
     print("Generating suggested questions...")
 
