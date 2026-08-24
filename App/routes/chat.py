@@ -24,7 +24,6 @@ from services.map_tools import TOOL_DEFINITIONS as MAP_TOOL_DEFINITIONS, execute
 from services.session_store import load_history, save_exchange
 
 import json
-import asyncio
 from groq import Groq
 from config import GROQ_API_KEY, GROQ_MODEL
 

@@ -1,20 +1,20 @@
-"""
-Router — The Traffic Cop for the RAG pipeline.
+﻿"""
+Router -- The Traffic Cop for the RAG pipeline.
 
 Classifies every incoming question into one of three intents:
-  • LOOKUP  → semantic search in Qdrant (regulations, policies, concepts)
-  • COMPUTE → SQL query against SQLite (student data, marks, attendance, faculty)
-  • HYBRID  → SQL first, then RAG merge (e.g. find top student + describe their record)
+  ? LOOKUP  -> semantic search in Qdrant (regulations, policies, concepts)
+  ? COMPUTE -> SQL query against SQLite (student data, marks, attendance, faculty)
+  ? HYBRID  -> SQL first, then RAG merge (e.g. find top student + describe their record)
 
 Decision flow (in priority order):
-  1. COMPUTE fast-patterns  — bare reg numbers, search-by-name, subject/marks queries
-  2. HYBRID  patterns       — two-part: "compute X AND describe Y"
-  3. Keyword scoring        — count COMPUTE vs LOOKUP keyword hits
-  4. LLM fallback           — for truly ambiguous questions
+  1. COMPUTE fast-patterns  -- bare reg numbers, search-by-name, subject/marks queries
+  2. HYBRID  patterns       -- two-part: "compute X AND describe Y"
+  3. Keyword scoring        -- count COMPUTE vs LOOKUP keyword hits
+  4. LLM fallback           -- for truly ambiguous questions
 
 Key rule: ALL student/faculty record lookups (by name, reg no, department) must
            route to COMPUTE (SQL), NOT Qdrant RAG. Qdrant only holds documents
-           like policies, syllabi, regulations — not tabular student records.
+           like policies, syllabi, regulations -- not tabular student records.
 """
 
 import re
@@ -25,7 +25,7 @@ _client = Groq(api_key=GROQ_API_KEY)
 
 
 # ---------------------------------------------------------------------------
-# Pattern 1: COMPUTE fast-lanes — always SQL, skip all keyword scoring
+# Pattern 1: COMPUTE fast-lanes -- always SQL, skip all keyword scoring
 # These catch the cases that used to leak into LOOKUP incorrectly.
 # ---------------------------------------------------------------------------
 
@@ -38,9 +38,9 @@ _COMPUTE_FORCE_PATTERNS = [
     r"\b5\d{11}\b",
     # "search for / find / look up <name or reg>"
     r"\b(search|find|lookup|look up|get|show|fetch|pull up|retrieve)\b.{0,30}\b(student|faculty|staff|teacher|professor|reg|registration|record|detail|info|profile)\b",
-    # "who is <Name>" or "who is <Name> from <batch/dept>"  — person lookup from DB
+    # "who is <Name>" or "who is <Name> from <batch/dept>"  -- person lookup from DB
     r"\bwho is\b.{1,60}\b(student|faculty|staff|from|batch|year|department|dept|reg|it|cse|ece|eee|mech|civil|ai)\b",
-    # "who is <UPPERCASE name>" — capitalized proper name = person lookup
+    # "who is <UPPERCASE name>" -- capitalized proper name = person lookup
     r"\bwho is\b\s+[A-Z][a-zA-Z\s\.]+",
     # "[name] from [batch/dept/year]" lookup
     r"\bfrom\b.{1,30}\b(batch|year|department|dept|2023|2024|2025|2026|2027|2028)\b",
@@ -48,7 +48,7 @@ _COMPUTE_FORCE_PATTERNS = [
     r"\b(details of|info(rmation)? (of|about|for)|profile of|record(s)? of)\b.{0,40}",
     # Subjects / marks / attendance OF a specific student (possessive or reference pronoun)
     r"\b(subjects?|courses?|enrolled|marks?|score|attendance|arrear|grade|gpa)\b.{0,30}\b(of|for|he|she|they|him|her|his|hers|this student|that student)\b",
-    # "what are his/her/their marks/grades/scores/attendance" — possessive pronoun = student lookup
+    # "what are his/her/their marks/grades/scores/attendance" -- possessive pronoun = student lookup
     r"\b(what (is|are)|show|get|give)\b.{0,20}\b(his|her|their|its)\b.{0,20}\b(marks?|grade|score|gpa|cgpa|attendance|subjects?|courses?|arrear)\b",
     # "which subjects is he/she enrolled in" style follow-up
     r"\bwhich (subjects?|courses?|papers?)\b",
@@ -63,7 +63,7 @@ _COMPUTE_FORCE_PATTERNS = [
 ]
 
 # ---------------------------------------------------------------------------
-# Pattern 2: HYBRID — two-part question requiring SQL + document context
+# Pattern 2: HYBRID -- two-part question requiring SQL + document context
 # ---------------------------------------------------------------------------
 
 _HYBRID_PATTERNS = [
@@ -84,9 +84,9 @@ _COMPUTE_KEYWORDS = [
     # filtering / comparison
     "more than", "less than", "greater than", "fewer than",
     "above", "below", "between",
-    # explicit compute phrases (NOT "calculate" alone — too ambiguous with "explain the calculation")
+    # explicit compute phrases (NOT "calculate" alone -- too ambiguous with "explain the calculation")
     "compute", "aggregate",
-    # student/faculty data — these belong in SQL, not Qdrant
+    # student/faculty data -- these belong in SQL, not Qdrant
     "student", "faculty", "staff", "teacher", "professor",
     "marks", "score", "grade", "gpa", "cgpa", "arrear", "fail", "pass",
     "attendance", "eligible", "hosteller", "day scholar",
@@ -94,7 +94,7 @@ _COMPUTE_KEYWORDS = [
     "male", "female", "gender", "blood group",
 ]
 
-# LOOKUP = only for concept/policy/document questions — NOT person lookups
+# LOOKUP = only for concept/policy/document questions -- NOT person lookups
 _LOOKUP_KEYWORDS = [
     "describe", "explain",
     "what is", "what are",
@@ -134,18 +134,18 @@ def _keyword_route(question: str):
     q = question.lower().strip()
     q_orig = question.strip()
 
-    # ── LAYER 1: COMPUTE force patterns ──────────────────────────────────────
-    # These always win — student/faculty data lives in SQL, not Qdrant.
+    # ?? LAYER 1: COMPUTE force patterns ??????????????????????????????????????
+    # These always win -- student/faculty data lives in SQL, not Qdrant.
     if _is_compute_forced(q_orig):
         return "COMPUTE"
 
-    # ── LAYER 2: HYBRID patterns ──────────────────────────────────────────────
+    # ?? LAYER 2: HYBRID patterns ??????????????????????????????????????????????
     for pattern in _HYBRID_PATTERNS:
         if re.search(pattern, q):
             return "HYBRID"
 
-    # ── LAYER 3: Keyword scoring ──────────────────────────────────────────────
-    # Detect "what is/are the <compute metric>" → trust COMPUTE
+    # ?? LAYER 3: Keyword scoring ??????????????????????????????????????????????
+    # Detect "what is/are the <compute metric>" -> trust COMPUTE
     is_what_compute = bool(re.search(
         r"what (is|are) (the )?"
         r"(total|average|avg|sum|count|highest|lowest|max|min|"
@@ -178,38 +178,38 @@ def _keyword_route(question: str):
     # Strong LOOKUP signal (no SQL signals at all)
     if lookup_hits > 0 and compute_hits == 0:
         return "LOOKUP"
-    # Both signals → HYBRID
+    # Both signals -> HYBRID
     if compute_hits > 0 and lookup_hits > 0:
         return "HYBRID"
 
-    return None  # truly ambiguous — fall through to LLM
+    return None  # truly ambiguous -- fall through to LLM
 
 
 def _llm_route(question: str) -> str:
     """
     Ask the LLM to classify the question when keyword routing is ambiguous.
     Returns one of: LOOKUP, COMPUTE, HYBRID.
-    Falls back to COMPUTE (safer default for this system — SQL always works).
+    Falls back to COMPUTE (safer default for this system -- SQL always works).
     """
     prompt = (
         "You are a query classifier for a college campus AI assistant (P.T. Lee CNCET).\n\n"
         "The system has TWO data sources:\n"
-        "  1. SQLite DATABASE — contains: student records (name, reg no, dept, batch, "
+        "  1. SQLite DATABASE -- contains: student records (name, reg no, dept, batch, "
         "marks, attendance, grades, arrears, contact info), faculty directory (name, "
         "cabin, phone, designation), courses, academic regulations.\n"
-        "  2. Qdrant VECTOR STORE — contains: uploaded documents like syllabus PDFs, "
+        "  2. Qdrant VECTOR STORE -- contains: uploaded documents like syllabus PDFs, "
         "exam guidelines, project reports, concept explanations.\n\n"
         "Classify the question into EXACTLY ONE category:\n\n"
-        "COMPUTE  — Query involves a SPECIFIC student/faculty (by name or reg no), "
+        "COMPUTE  -- Query involves a SPECIFIC student/faculty (by name or reg no), "
         "OR requires counting/averaging/filtering tabular data (marks, attendance, "
         "grades, arrears, gender, batch, department).\n"
         "           Examples: 'who is Aathi S', '511523205001', 'marks of IT students', "
         "'which subjects is he enrolled in', 'phone number of Divagaran'\n\n"
-        "LOOKUP   — Question is about a CONCEPT, POLICY, or DOCUMENT — NOT a specific "
+        "LOOKUP   -- Question is about a CONCEPT, POLICY, or DOCUMENT -- NOT a specific "
         "person or tabular data.\n"
         "           Examples: 'explain the GPA formula', 'what is the exam pattern', "
         "'describe the project guidelines'\n\n"
-        "HYBRID   — Needs BOTH: SQL data AND document context to answer fully.\n"
+        "HYBRID   -- Needs BOTH: SQL data AND document context to answer fully.\n"
         "           Examples: 'who has the highest marks and describe their project'\n\n"
         "IMPORTANT: If the question names a person OR contains a registration number, "
         "ALWAYS respond COMPUTE.\n\n"
@@ -247,9 +247,10 @@ def route_question(question: str) -> str:
     label = _keyword_route(question)
 
     if label:
-        print(f"[Router] Keyword match → {label}")
+        print(f"[Router] Keyword match -> {label}")
         return label
 
     label = _llm_route(question)
-    print(f"[Router] LLM classified  → {label}")
+    print(f"[Router] LLM classified  -> {label}")
     return label
+

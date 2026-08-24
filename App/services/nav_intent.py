@@ -1,4 +1,4 @@
-"""
+﻿"""
 Navigation Intent Detector.
 
 Decides whether a user's question is a campus navigation/location query
@@ -49,10 +49,11 @@ _ROOM_ID_PATTERN = re.compile(r"\b[GgFfSs]\d{2}\b")
 def is_navigation_query(question: str) -> bool:
     """
     Returns True if the question is a campus navigation / location query.
-    Fast heuristic — no LLM call needed.
+    Fast heuristic -- no LLM call needed.
     """
     if _NAV_PATTERNS.search(question):
         return True
     if _ROOM_ID_PATTERN.search(question):
         return True
     return False
+

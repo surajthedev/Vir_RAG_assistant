@@ -1,5 +1,5 @@
-"""
-Tool Caller — Groq MCP-style agentic tool-calling loop.
+﻿"""
+Tool Caller -- Groq MCP-style agentic tool-calling loop.
 
 Handles the full round-trip:
   1. Send user message + tool definitions to Groq.
@@ -52,7 +52,7 @@ def generate_with_tools(system_prompt: str, user_message: str, history: list = N
 
     for round_num in range(MAX_TOOL_ROUNDS):
 
-        print(f"\n[ToolCaller] Round {round_num + 1} — sending {len(messages)} messages")
+        print(f"\n[ToolCaller] Round {round_num + 1} -- sending {len(messages)} messages")
 
         response = client.chat.completions.create(
             model=GROQ_MODEL,
@@ -65,15 +65,15 @@ def generate_with_tools(system_prompt: str, user_message: str, history: list = N
         choice = response.choices[0]
         message = choice.message
 
-        # No tool calls → final answer reached
+        # No tool calls -> final answer reached
         if not message.tool_calls:
-            print("[ToolCaller] No tool calls — returning final answer.")
+            print("[ToolCaller] No tool calls -- returning final answer.")
             return message.content or ""
 
         # Log tool calls
         print(f"[ToolCaller] {len(message.tool_calls)} tool call(s) requested:")
         for tc in message.tool_calls:
-            print(f"  → {tc.function.name}({tc.function.arguments})")
+            print(f"  -> {tc.function.name}({tc.function.arguments})")
 
         # Append assistant's tool-call message to history
         messages.append({
@@ -106,3 +106,4 @@ def generate_with_tools(system_prompt: str, user_message: str, history: list = N
 
     # Safety fallback if loop exhausted
     return "I was unable to complete navigation after multiple attempts. Please try rephrasing your question."
+

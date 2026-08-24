@@ -1,4 +1,4 @@
-from groq import Groq
+﻿from groq import Groq
 
 from config import GROQ_API_KEY, GROQ_MODEL
 
@@ -55,7 +55,7 @@ Document:
     questions = response.choices[0].message.content.strip().split("\n")
 
     questions = [
-        q.strip().lstrip("0123456789.-• ")
+        q.strip().lstrip("0123456789.-? ")
         for q in questions
         if q.strip()
     ]

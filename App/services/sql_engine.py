@@ -1,5 +1,5 @@
-"""
-SQL Engine — The COMPUTE branch of the RAG pipeline.
+﻿"""
+SQL Engine -- The COMPUTE branch of the RAG pipeline.
 
 Executes natural-language questions against the unified SQLite database:
   App/data/app.db (Consolidated modular schema + views)
@@ -33,7 +33,7 @@ DB_PATH = os.path.join(APP_DIR, "data", "app.db")
 
 
 # ---------------------------------------------------------------------------
-# Schema Master Loader — Ultra-Compact (Column Names Only)
+# Schema Master Loader -- Ultra-Compact (Column Names Only)
 # ---------------------------------------------------------------------------
 
 def load_schema_context(conn: sqlite3.Connection, question: str = "") -> str:
@@ -339,6 +339,17 @@ _DESTRUCTIVE_SQL_RE = re.compile(
 )
 
 
+
+# Regex that catches any destructive keyword anywhere in the SQL (blocks bypass tricks
+# like "WITH t AS (DELETE ...) SELECT ...").
+_DESTRUCTIVE_SQL_RE = re.compile(
+    r"\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|REPLACE"
+    r"|ATTACH|DETACH|VACUUM|REINDEX|ANALYZE"
+    r"|PRAGMA\s+(?!table_info|index_list|index_info|foreign_key_list|table_xinfo))\b",
+    re.IGNORECASE,
+)
+
+
 def _safe_execute(conn: sqlite3.Connection, sql: str) -> dict:
     """
     Safely execute a SELECT or WITH … SELECT query against SQLite.
@@ -395,7 +406,7 @@ def run_sql(question: str, filename: str = None, max_retries: int = 5) -> dict:
     print(f"Question : {question}")
     print(f"Filename : {filename or 'Consolidated SQLite (app.db)'}")
 
-    # ── Fast Check: Direct Zero-Token Regex ───────────────────────────────────
+    # ?? Fast Check: Direct Zero-Token Regex ???????????????????????????????????
     direct_sql = _try_direct_sql(question)
     if direct_sql and not filename:
         print(f"[SQLEngine] Direct SQL match: {direct_sql}")
@@ -413,7 +424,7 @@ def run_sql(question: str, filename: str = None, max_retries: int = 5) -> dict:
         print("================================\n")
         return result
 
-    # ── Case A: Custom CSV filename provided (legacy upload mode) ─────────────
+    # ?? Case A: Custom CSV filename provided (legacy upload mode) ?????????????
     if filename and not filename.endswith(".db"):
         pattern = os.path.join(UPLOAD_FOLDER, f"*_{filename}")
         matches = glob.glob(pattern)
@@ -447,7 +458,7 @@ def run_sql(question: str, filename: str = None, max_retries: int = 5) -> dict:
             print("================================\n")
             return result
 
-    # ── Case B: Primary Unified Database (app.db) ─────────────────────────────
+    # ?? Case B: Primary Unified Database (app.db) ?????????????????????????????
     if not os.path.exists(DB_PATH):
         import subprocess
         print("[SQLEngine] app.db not found, building via ingest_sqlite.py...")
@@ -489,3 +500,4 @@ def run_sql(question: str, filename: str = None, max_retries: int = 5) -> dict:
     print("================================\n")
 
     return result
+
