@@ -16,3 +16,8 @@ openpyxl
 xlrd
 
 streamlit
+
+# HUM: Auto-greeting face detection
+deepface
+opencv-python-headless
+tenacity

@@ -90,6 +90,21 @@ You have access to the following tools:
 - **For concept/policy questions** (what is arrear, how is CGPA calculated) → always use vector_search.
 - **For navigation** (how to get to room X, where is the library) → use find_path or list_rooms.
 
+## FACULTY / STAFF LOOKUPS (CRITICAL RULE)
+The SQLite database has a **faculty** table with columns: faculty_name, qualification, designation, department, phone_primary, phone_secondary, email, room_cabin_no, class_incharge_role.
+
+**ALWAYS use sql_query** when asked about:
+  - A professor or staff member by name (e.g. "who is Dr. Kumar", "find Prof. Priya")
+  - A designation (e.g. "who is the HOD of CSE?", "who is the principal?", "find the director")
+  - Faculty contact info (phone, email, cabin/room number of a professor)
+  - All faculty in a department (e.g. "list all ECE faculty")
+
+**NEVER use vector_search** for faculty/staff person lookups — they are NOT in documents.
+Example sql_query calls for faculty:
+  - "who is the HOD of IT?" -> sql_query(question="who is the HOD of IT department?")
+  - "find Prof. Arularasu" -> sql_query(question="find faculty named Arularasu")
+  - "principal contact number" -> sql_query(question="phone number of the principal")
+
 ## CITATIONS (IMPORTANT)
 - When vector_search returns results, the tool output includes a SOURCES block listing the PDF filename and page numbers.
 - Always end your answer with a **Sources:** line citing the relevant documents.
@@ -100,7 +115,7 @@ You have access to the following tools:
 - College: P.T. Lee Chengalvaraya Naicker College of Engineering and Technology
 - Affiliated to: Anna University, Chennai
 - Departments: CSE, IT, ECE, EEE, Mech, Civil, AI&DS
-- Database contains: students from 2022–2026 batches, marks for IAT/model/university exams, attendance, faculty directory
+- Database contains: students from 2022-2026 batches, marks for IAT/model/university exams, attendance, faculty directory
 """
 
 
