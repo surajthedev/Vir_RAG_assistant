@@ -3,14 +3,8 @@ ui/api.py — Backend API Client for the Streamlit UI
 
 Functions:
   - upload_pdf(file)                     → POST /upload
-  - ask_question_stream(...)             → POST /chat  (streaming generator)
+  - ask_question(...)                    → POST /chat
   - get_suggestions(filename)            → POST /suggestions
-
-Streaming is done by calling /chat normally but yielding tokens from the
-response so Streamlit's st.write_stream() can render them as they arrive.
-Since our backend isn't SSE-based, we fetch the full response and yield
-the answer word-by-word with a tiny delay to simulate streaming.
-(For true token streaming, the backend would need SSE — add later.)
 """
 
 import os

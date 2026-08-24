@@ -13,7 +13,7 @@ Improvements over original:
 import uuid
 import streamlit as st
 
-from ui.api import upload_pdf, ask_question_stream, get_suggestions
+from ui.api import upload_pdf, ask_question, get_suggestions
 
 # --------------------------------------------------
 # Page Configuration
@@ -52,41 +52,24 @@ if "followups" not in st.session_state:
 
 
 # --------------------------------------------------
-# Helper — Process and Stream a Question
+# Helper — Process a Question
 # --------------------------------------------------
 
 def process_question(question: str):
     # Append user message to local display history
     st.session_state.messages.append({"role": "user", "content": question})
 
-    with st.chat_message("assistant"):
-        # Stream the response token by token
-        streamed_answer = st.write_stream(
-            ask_question_stream(
-                question=question,
-                filename="",
-                history=st.session_state.messages[-6:],
-                session_id=st.session_state.session_id,
-            )
+    with st.spinner("Vir is thinking..."):
+        response = ask_question(
+            question=question,
+            filename="",
+            history=st.session_state.messages[-6:],
+            session_id=st.session_state.session_id,
         )
 
-    # After streaming completes, fetch the full structured response
-    # for followups, debug info etc. (streaming response only gives text)
-    full_response = ask_question_stream(
-        question=question,
-        filename="",
-        history=st.session_state.messages[-6:],
-        session_id=st.session_state.session_id,
-        metadata_only=True,
-    )
-
-    answer = streamed_answer or ""
-    followups = []
-    debug = {}
-
-    if full_response:
-        followups = full_response.get("followups", [])
-        debug = full_response.get("debug", {})
+    answer = response.get("answer", "⚠️ No response received from server.")
+    followups = response.get("followups", [])
+    debug = response.get("debug", {})
 
     st.session_state.followups = followups
     st.session_state.messages.append({"role": "assistant", "content": answer})
