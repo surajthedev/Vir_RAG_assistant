@@ -13,7 +13,7 @@ Improvements over original:
 import uuid
 import streamlit as st
 
-from ui.api import upload_pdf, ask_question, get_suggestions
+from ui.api import upload_pdf, ask_question, get_suggestions, stream_chat
 
 # --------------------------------------------------
 # Page Configuration
@@ -56,30 +56,69 @@ if "followups" not in st.session_state:
 # --------------------------------------------------
 
 def process_question(question: str):
-    # Append user message to local display history
+    """Send question to backend via SSE stream and display response in real time."""
     st.session_state.messages.append({"role": "user", "content": question})
 
-    with st.spinner("Vir is thinking..."):
-        response = ask_question(
-            question=question,
-            filename="",
-            history=st.session_state.messages[-6:],
-            session_id=st.session_state.session_id,
-        )
+    # Show the user message immediately
+    with st.chat_message("user"):
+        st.markdown(question)
 
-    answer = response.get("answer", "⚠️ No response received from server.")
-    followups = response.get("followups", [])
-    debug = response.get("debug", {})
+    with st.chat_message("assistant"):
+        # Status box for tool-call progress labels
+        status_box = st.status("Vir is thinking...", expanded=False)
 
+        # Collect token chunks so we can save the full answer afterwards
+        answer_parts = []
+        followups = []
+        debug = {}
+
+        def _token_generator():
+            """Inner generator consumed by st.write_stream() -- yields text strings."""
+            for evt in stream_chat(
+                question=question,
+                filename="",
+                history=st.session_state.messages[-6:],
+                session_id=st.session_state.session_id,
+            ):
+                event_type = evt["event"]
+
+                if event_type == "progress":
+                    # Update the status label while tools are running
+                    status_box.update(label=evt["message"])
+
+                elif event_type == "token":
+                    text = evt["text"].replace("\\n", "\n")
+                    answer_parts.append(text)
+                    yield text
+
+                elif event_type == "done":
+                    payload = evt["payload"]
+                    followups.extend(payload.get("followups", []))
+                    debug.update({
+                        "tools_used": payload.get("tools_used", []),
+                        "rounds":     payload.get("rounds", ""),
+                        "source":     payload.get("source", ""),
+                    })
+                    status_box.update(label="Done", state="complete", expanded=False)
+
+                elif event_type == "error":
+                    answer_parts.append(f"Error: {evt['message']}")
+                    yield f"\n\nError: {evt['message']}"
+                    status_box.update(label="Error", state="error", expanded=False)
+
+        # Stream tokens directly into the chat bubble
+        st.write_stream(_token_generator())
+
+    full_answer = "".join(answer_parts)
+    st.session_state.messages.append({"role": "assistant", "content": full_answer})
     st.session_state.followups = followups
-    st.session_state.messages.append({"role": "assistant", "content": answer})
 
-    # Show subtle debug badge
+    # Subtle debug badge
     if debug:
         tools = debug.get("tools_used", [])
         rounds = debug.get("rounds", "")
         if tools or rounds:
-            st.caption(f"🔧 Tools: `{', '.join(tools) or 'fast-path'}` · Rounds: `{rounds}`")
+            st.caption(f"Tools: `{', '.join(tools) or 'fast-path'}` | Rounds: `{rounds}`")
 
 
 # --------------------------------------------------
