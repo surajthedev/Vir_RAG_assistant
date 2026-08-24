@@ -164,17 +164,20 @@ def _extract_sql(text: str) -> str:
 def _try_direct_sql(question: str) -> str:
     """
     Fast, zero-LLM SQL generator for unambiguous deterministic lookups.
-    Saves LLM tokens and provides 100% reliable instant SQL for common queries:
-      - 12-digit registration number: SELECT * FROM students
-      - 'who is <Name>': SELECT * FROM students WHERE LOWER(student_name) LIKE '%name%'
+    Covers:
+      - 12-digit registration numbers → students table
+      - Faculty name / Prof. / Dr. lookups → faculty table
+      - Designation lookups (HOD, Principal, Director, etc.) → faculty table
+      - Department-wise faculty list → faculty table
+      - 'who is <Name>' → students OR faculty table
     """
     q = question.strip()
-    
+    q_lower = q.lower()
+
     # 1. 12-digit Register Number lookup
     reg_match = re.search(r"\b(5\d{11})\b", q)
     if reg_match:
         reg_no = reg_match.group(1)
-        q_lower = q.lower()
         if any(w in q_lower for w in ["subject", "course", "enrolled"]):
             return f"SELECT course_code, course_title, semester, exam_type FROM student_assessments WHERE reg_no = '{reg_no}' GROUP BY course_code"
         if any(w in q_lower for w in ["mark", "score", "grade", "iat", "exam"]):
@@ -183,11 +186,94 @@ def _try_direct_sql(question: str) -> str:
             return f"SELECT course_code, course_title, total_classes_conducted, classes_attended, attendance_percentage, exam_eligibility_status FROM attendance WHERE reg_no = '{reg_no}'"
         return f"SELECT * FROM students WHERE reg_no = '{reg_no}'"
 
-    # 2. Simple 'who is <Name>' lookup
+    # ── Faculty fast-paths ──────────────────────────────────────────────────────
+
+    _DESIGNATIONS = [
+        "hod", "head of department", "principal", "director", "dean",
+        "warden", "librarian", "counsellor", "counselor",
+        "associate professor", "assistant professor", "professor",
+        "placement officer", "lab in-charge", "lab incharge",
+        "class incharge", "class advisor", "coordinator",
+    ]
+    designation_found = next((d for d in _DESIGNATIONS if d in q_lower), None)
+
+    # 2. Designation-based lookup: "who is the HOD of CSE", "contact of principal",
+    #    "phone number of the director", "find the warden"
+    desig_match = re.search(
+        r"\b(who is|find|get|show|tell me about|contact of|phone of|phone number of|"
+        r"email of|cabin of|room of|details of|number of|contact)\b"
+        r".{0,50}"
+        r"\b(hod|head of department|principal|director|dean|warden|librarian|counsellor|counselor|"
+        r"professor|associate professor|assistant professor|placement officer|class advisor|coordinator)\b",
+        q_lower
+    )
+    if desig_match and designation_found:
+        dept_match = re.search(r"\b(cse|it|ece|eee|mech|civil|ai|aids)\b", q_lower)
+        if dept_match:
+            dept = dept_match.group(1).upper()
+            return (
+                f"SELECT faculty_name, designation, department, phone_primary, email, room_cabin_no "
+                f"FROM faculty WHERE LOWER(designation) LIKE LOWER('%{designation_found}%') "
+                f"AND LOWER(department) LIKE LOWER('%{dept}%')"
+            )
+        return (
+            f"SELECT faculty_name, designation, department, phone_primary, email, room_cabin_no "
+            f"FROM faculty WHERE LOWER(designation) LIKE LOWER('%{designation_found}%')"
+        )
+
+    # 3. "list all faculty/staff in <dept>" / "show professors in ECE" / "show all ECE faculty"
+    #    Two patterns: dept AFTER keyword ("faculty in ECE") OR dept BEFORE ("ECE faculty")
+    _DEPT_RE = r"\b(cse|it|ece|eee|mech|civil|ai|aids)\b"
+    _FAC_WORD = r"\b(faculty|staff|professors?|teachers?)\b"
+    _LIST_VERB = r"\b(list|show|give|get|find|all)\b"
+    list_faculty_match = (
+        re.search(rf"{_LIST_VERB}.{{0,20}}{_FAC_WORD}.{{0,30}}{_DEPT_RE}", q_lower)
+        or re.search(rf"{_LIST_VERB}.{{0,20}}{_DEPT_RE}.{{0,20}}{_FAC_WORD}", q_lower)
+        or re.search(rf"{_DEPT_RE}.{{0,20}}{_FAC_WORD}", q_lower)  # bare "ECE faculty" / "IT staff"
+    )
+    # Only trigger if there's actually a dept keyword present
+    dept_m = re.search(_DEPT_RE, q_lower)
+    if list_faculty_match and dept_m:
+        dept = dept_m.group(1).upper()
+        return (
+            f"SELECT faculty_name, designation, department, phone_primary, email, room_cabin_no "
+            f"FROM faculty WHERE LOWER(department) LIKE LOWER('%{dept}%') ORDER BY designation"
+        )
+
+    # 4. Faculty name lookup with Prof./Dr. prefix: "find Dr. Kumar", "who is Prof. Priya"
+    #    Guard: skip if query contains list/all/dept keywords (already handled above)
+    _has_list_signal = any(w in q_lower for w in ["all ", "list ", "show all", "every"])
+    faculty_name_match = re.search(
+        r"\b(who is|find|search|get|show|fetch|contact of|phone of|email of|cabin of|room of|details of|info of|profile of)\b"
+        r"\s+(?:prof\.?|dr\.?|mr\.?|mrs\.?|ms\.?)?\s*([A-Za-z][A-Za-z\s\.]{2,40}?)(?:\s+from|\s+in|\s+of|\s*$)",
+        q, re.IGNORECASE
+    )
+    if (
+        faculty_name_match
+        and not _has_list_signal
+        and any(w in q_lower for w in [
+            "prof", "dr.", "dr ", "faculty", "staff", "teacher", "professor", "hod", "sir", "madam"
+        ])
+    ):
+        name_query = faculty_name_match.group(2).strip().rstrip(".")
+        # Don't use as name if it looks like a dept word
+        bad_words = {"all", "faculty", "staff", "cse", "it", "ece", "eee", "mech", "civil", "ai"}
+        if len(name_query) >= 2 and name_query.lower() not in bad_words:
+            return (
+                f"SELECT faculty_name, designation, department, qualification, phone_primary, email, room_cabin_no "
+                f"FROM faculty WHERE LOWER(faculty_name) LIKE LOWER('%{name_query}%')"
+            )
+
+    # 5. Simple 'who is <Name>' — try faculty first if Prof/Dr is mentioned, else students
     who_match = re.search(r"^who is\s+([A-Za-z\s\.]+?)(?:\s+from|\s+in|\s*$)", q, re.IGNORECASE)
     if who_match:
         name_query = who_match.group(1).strip()
         if len(name_query) >= 3 and not any(w in name_query.lower() for w in ["the", "this", "that", "faculty", "student"]):
+            if any(p in q_lower for p in ["prof", "dr.", "dr ", "professor"]):
+                return (
+                    f"SELECT faculty_name, designation, department, phone_primary, email, room_cabin_no "
+                    f"FROM faculty WHERE LOWER(faculty_name) LIKE LOWER('%{name_query}%')"
+                )
             return f"SELECT * FROM students WHERE LOWER(student_name) LIKE LOWER('%{name_query}%')"
 
     return ""
@@ -218,7 +304,13 @@ def _generate_sql(schema_text: str, question: str, previous_error: str = None, p
         "2. Use column names EXACTLY as listed in the schema.\n"
         "3. Use case-insensitive LIKE or LOWER() for names and departments (e.g. LOWER(student_name) LIKE '%aathi%').\n"
         "4. Available views for convenience: view_student_performance_summary, view_exam_subject_analytics, view_student_complete_profile.\n"
-        "5. If question cannot be answered, output: SELECT 'NO_DATA'\n\n"
+        "5. If question cannot be answered, output: SELECT 'NO_DATA'\n"
+        "6. FACULTY RULES — the 'faculty' table stores all staff/professors/admin:\n"
+        "   - Columns: faculty_id, faculty_name, qualification, designation, department, phone_primary, phone_secondary, email, room_cabin_no, class_incharge_role\n"
+        "   - For 'who is the HOD of X': WHERE LOWER(designation) LIKE '%hod%' AND LOWER(department) LIKE '%X%'\n"
+        "   - For 'who is the principal/director': WHERE LOWER(designation) LIKE '%principal%' (or '%director%')\n"
+        "   - For faculty by name (Prof. X / Dr. X): WHERE LOWER(faculty_name) LIKE '%X%'\n"
+        "   - For contact/phone/email/cabin: SELECT faculty_name, designation, phone_primary, email, room_cabin_no FROM faculty WHERE ...\n\n"
         f"QUESTION: {question}\n\n"
         "SQL:"
     )
