@@ -11,9 +11,14 @@ Vir now:
   6. Returns the final answer string.
 
 This gives the model full agency over retrieval strategy, with no manual routing.
+
+Public API:
+  run_agent(question, history)    — blocking, returns dict (existing behaviour)
+  stream_agent(question, history) — async generator, yields SSE lines for /chat/stream
 """
 
 import json
+import asyncio
 import logging
 from groq import Groq, RateLimitError, APIConnectionError, APITimeoutError, APIStatusError
 from tenacity import (
@@ -90,6 +95,21 @@ You have access to the following tools:
 - **For concept/policy questions** (what is arrear, how is CGPA calculated) → always use vector_search.
 - **For navigation** (how to get to room X, where is the library) → use find_path or list_rooms.
 
+## FACULTY / STAFF LOOKUPS (CRITICAL RULE)
+The SQLite database has a **faculty** table with columns: faculty_name, qualification, designation, department, phone_primary, phone_secondary, email, room_cabin_no, class_incharge_role.
+
+**ALWAYS use sql_query** when asked about:
+  - A professor or staff member by name (e.g. "who is Dr. Kumar", "find Prof. Priya")
+  - A designation (e.g. "who is the HOD of CSE?", "who is the principal?", "find the director")
+  - Faculty contact info (phone, email, cabin/room number of a professor)
+  - All faculty in a department (e.g. "list all ECE faculty")
+
+**NEVER use vector_search** for faculty/staff person lookups — they are NOT in documents.
+Example sql_query calls for faculty:
+  - "who is the HOD of IT?" -> sql_query(question="who is the HOD of IT department?")
+  - "find Prof. Arularasu" -> sql_query(question="find faculty named Arularasu")
+  - "principal contact number" -> sql_query(question="phone number of the principal")
+
 ## CITATIONS (IMPORTANT)
 - When vector_search returns results, the tool output includes a SOURCES block listing the PDF filename and page numbers.
 - Always end your answer with a **Sources:** line citing the relevant documents.
@@ -100,7 +120,7 @@ You have access to the following tools:
 - College: P.T. Lee Chengalvaraya Naicker College of Engineering and Technology
 - Affiliated to: Anna University, Chennai
 - Departments: CSE, IT, ECE, EEE, Mech, Civil, AI&DS
-- Database contains: students from 2022–2026 batches, marks for IAT/model/university exams, attendance, faculty directory
+- Database contains: students from 2022-2026 batches, marks for IAT/model/university exams, attendance, faculty directory
 """
 
 
@@ -268,3 +288,189 @@ def run_agent(question: str, history: list = None) -> dict:
             "total_tokens": total_tokens,
         },
     }
+
+
+# -- Streaming Agent (async generator for SSE) ---------------------------------
+
+# Human-readable progress labels shown to the user while tools run
+_TOOL_PROGRESS_LABELS = {
+    "sql_query":     "Querying SQLite database...",
+    "vector_search": "Searching documents...",
+    "find_path":     "Calculating campus route...",
+    "list_rooms":    "Looking up campus rooms...",
+    "get_room_info": "Fetching room details...",
+}
+
+
+async def stream_agent(question: str, history: list = None):
+    """
+    Async generator -- yields raw SSE lines for the /chat/stream endpoint.
+
+    Yielded line formats (each call produces one complete SSE message string):
+
+      event: progress\\ndata: {"message": "..."}\\n\\n
+      event: token\\ndata: {"text": "chunk"}\\n\\n
+      event: done\\ndata: {"followups": [...], "tools_used": [...], ...}\\n\\n
+      event: error\\ndata: {"message": "..."}\\n\\n
+
+    Blocking Groq calls are offloaded with asyncio.to_thread so the event
+    loop stays free to flush bytes to the client between tool rounds.
+    """
+    if history is None:
+        history = []
+
+    # Build initial message list (same logic as run_agent)
+    messages = [{"role": "system", "content": AGENT_SYSTEM_PROMPT}]
+    for msg in history[-6:]:
+        if isinstance(msg, dict) and msg.get("role") in ("user", "assistant") and msg.get("content"):
+            messages.append({"role": msg["role"], "content": msg["content"]})
+    messages.append({"role": "user", "content": question})
+
+    tools_used = []
+    rounds = 0
+
+    try:
+        # -- Agentic tool-call rounds (non-streaming; tool calls need full response) --
+        for round_num in range(1, MAX_ROUNDS + 1):
+            rounds = round_num
+
+            # Blocking Groq call offloaded to thread pool
+            response = await asyncio.to_thread(
+                _call_groq, _client, messages, AGENT_TOOL_DEFINITIONS
+            )
+
+            choice = response.choices[0]
+            message = choice.message
+
+            # No tool calls -> ready for final streaming answer
+            if not message.tool_calls:
+                break
+
+            # Emit one progress event per tool call the LLM requested
+            for tc in message.tool_calls:
+                label = _TOOL_PROGRESS_LABELS.get(
+                    tc.function.name, f"Running {tc.function.name}..."
+                )
+                yield f'event: progress\ndata: {{"message": "{label}"}}\n\n'
+
+            # Append assistant tool-call message
+            messages.append({
+                "role": "assistant",
+                "content": message.content,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in message.tool_calls
+                ],
+            })
+
+            # Execute each tool in a thread and append results
+            for tc in message.tool_calls:
+                tool_name = tc.function.name
+                if tool_name not in tools_used:
+                    tools_used.append(tool_name)
+
+                tool_result = await asyncio.to_thread(
+                    execute_agent_tool, tool_name, tc.function.arguments
+                )
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": str(tool_result),
+                })
+
+        else:
+            # MAX_ROUNDS exhausted -- nudge the model to synthesise
+            messages.append({
+                "role": "user",
+                "content": "Please synthesize a final answer based on the tool results above.",
+            })
+
+        # -- Stream the final answer token-by-token ---------------------------------
+        # The Groq SDK streaming API is synchronous, so we run it in a background
+        # thread and pass tokens back via a queue so this async generator can yield
+        # them without blocking the event loop.
+        import queue as _queue
+
+        chunk_queue: _queue.Queue = _queue.Queue()
+
+        def _run_stream():
+            """Run the blocking Groq stream in a thread; push chunks onto the queue."""
+            try:
+                stream = _client.chat.completions.create(
+                    model=GROQ_MODEL,
+                    messages=messages,
+                    tools=None,
+                    tool_choice=None,
+                    temperature=0.2,
+                    max_tokens=2048,
+                    stream=True,
+                )
+                for chunk in stream:
+                    delta = chunk.choices[0].delta if chunk.choices else None
+                    text = getattr(delta, "content", None) if delta else None
+                    if text:
+                        chunk_queue.put(text)
+            except Exception as exc:
+                chunk_queue.put(exc)
+            finally:
+                chunk_queue.put(None)  # sentinel: stream is done
+
+        loop = asyncio.get_event_loop()
+        stream_future = loop.run_in_executor(None, _run_stream)
+
+        full_answer_parts = []
+
+        # Drain the queue, yielding each token to the HTTP response
+        while True:
+            try:
+                item = chunk_queue.get_nowait()
+            except _queue.Empty:
+                await asyncio.sleep(0.01)  # release control briefly
+                continue
+
+            if item is None:  # sentinel -- stream finished
+                break
+            if isinstance(item, Exception):
+                yield f'event: error\ndata: {{"message": "LLM stream error: {item}"}}\n\n'
+                return
+
+            full_answer_parts.append(item)
+            # Escape characters that would break the inline JSON string
+            safe = (
+                item
+                .replace("\\", "\\\\")
+                .replace('"', '\\"')
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+            )
+            yield f'event: token\ndata: {{"text": "{safe}"}}\n\n'
+
+        await stream_future  # ensure the background thread is fully cleaned up
+
+        # -- Generate followup questions (blocking, run in thread) ------------------
+        from services.followups import generate_followup_questions
+        full_answer = "".join(full_answer_parts)
+        followups = await asyncio.to_thread(generate_followup_questions, question, full_answer)
+        followups = followups or []
+
+        # Final metadata event
+        import json as _json
+        done_payload = _json.dumps({
+            "followups": followups,
+            "tools_used": tools_used,
+            "rounds": rounds,
+            "source": "agent",
+        })
+        yield f"event: done\ndata: {done_payload}\n\n"
+
+    except Exception as exc:
+        logger.exception("[stream_agent] Unhandled error")
+        yield f'event: error\ndata: {{"message": "Internal error: {exc}"}}\n\n'
+

@@ -1,4 +1,4 @@
-from qdrant_client import QdrantClient
+﻿from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance,
     VectorParams,
@@ -222,3 +222,4 @@ def get_document_preview(filename, limit=5):
     )
 
     return preview
+

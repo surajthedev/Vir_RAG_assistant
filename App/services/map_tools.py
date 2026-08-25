@@ -1,4 +1,4 @@
-"""
+﻿"""
 Map Tool Definitions and Executor for Groq MCP-style Tool Calling.
 
 Exposes three tools the LLM can call:
@@ -138,11 +138,11 @@ def _tool_find_path(source: str, destination: str) -> str:
             return result["directions"]
 
         lines = [
-            f"📍 Route: {result['src_name']} ({result['src']}) → {result['dst_name']} ({result['dst']})",
-            f"📏 Distance: {result['distance']} corridor unit(s)",
-            f"🗺️  Path: {' → '.join(result['path_named'])}",
+            f"?? Route: {result['src_name']} ({result['src']}) -> {result['dst_name']} ({result['dst']})",
+            f"?? Distance: {result['distance']} corridor unit(s)",
+            f"???  Path: {' -> '.join(result['path_named'])}",
             "",
-            "📋 Step-by-step Directions:",
+            "?? Step-by-step Directions:",
             result["directions"],
         ]
         return "\n".join(lines)
@@ -191,11 +191,11 @@ def _tool_list_rooms(query: str) -> str:
     if not matches:
         return f"No rooms found matching '{query}'."
 
-    lines = [f"🏫 {header} ({len(matches)} result(s)):"]
+    lines = [f"?? {header} ({len(matches)} result(s)):"]
     for nid, n in sorted(matches, key=lambda x: (x[1]["floor"], x[0])):
         cat = CATEGORY_LABELS.get(n.get("category", ""), n.get("category", ""))
         floor = FLOOR_NAMES.get(n["floor"], f"Floor {n['floor']}")
-        lines.append(f"  • [{nid}] {n['name']} — {cat}, {floor}")
+        lines.append(f"  ? [{nid}] {n['name']} -- {cat}, {floor}")
 
     return "\n".join(lines)
 
@@ -207,21 +207,21 @@ def _tool_get_room_info(room_id: str) -> str:
         n = NODES[resolved]
         cat = CATEGORY_LABELS.get(n.get("category", ""), n.get("category", "Unknown"))
         floor = FLOOR_NAMES.get(n["floor"], f"Floor {n['floor']}")
-        verified = "✅ Verified" if n.get("verified", True) else "⚠️ Unverified (needs on-site confirmation)"
+        verified = "? Verified" if n.get("verified", True) else "?? Unverified (needs on-site confirmation)"
         note = f"\n  Note: {n['note']}" if n.get("note") else ""
         return (
-            f"🏷️  Room ID   : {resolved}\n"
-            f"📌 Name      : {n['name']}\n"
-            f"🏢 Floor     : {floor}\n"
-            f"📂 Category  : {cat}\n"
-            f"🔍 Status    : {verified}{note}"
+            f"???  Room ID   : {resolved}\n"
+            f"?? Name      : {n['name']}\n"
+            f"?? Floor     : {floor}\n"
+            f"?? Category  : {cat}\n"
+            f"?? Status    : {verified}{note}"
         )
     except ValueError as e:
         return f"Room lookup error: {e}"
 
 
 # ---------------------------------------------------------------------------
-# Central dispatcher — called by tool_caller.py
+# Central dispatcher -- called by tool_caller.py
 # ---------------------------------------------------------------------------
 #so we have three tools 
 
@@ -245,3 +245,4 @@ def execute_tool(tool_name: str, arguments: str) -> str:
         return executor(args)
     except Exception as e:
         return f"Tool execution error ({tool_name}): {e}"
+

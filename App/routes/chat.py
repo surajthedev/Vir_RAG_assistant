@@ -11,9 +11,10 @@ which tools (vector_search, sql_query, map tools) to call.
 """
 
 from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from services.agent import run_agent
+from services.agent import run_agent, stream_agent
 from services.agent_tools import AGENT_TOOL_DEFINITIONS, execute_agent_tool
 from services.fast_path import fast_path
 from services.sql_engine import run_sql
@@ -181,3 +182,112 @@ async def chat(request: ChatRequest):
             "rounds": rounds,
         },
     }
+
+
+# -- Streaming Chat Endpoint (SSE) ---------------------------------------------
+
+@router.post("/chat/stream")
+async def chat_stream(request: ChatRequest):
+    """
+    Streaming version of /chat.
+    Returns a text/event-stream response (Server-Sent Events).
+
+    Event types emitted:
+      progress  -- tool-call status message
+      token     -- one LLM text chunk
+      done      -- final metadata (followups, tools_used, source, session_id)
+      error     -- unrecoverable error message
+    """
+    question = request.question.strip()
+    session_id = request.session_id.strip()
+
+    if session_id:
+        history = load_history(session_id)
+    else:
+        history = request.history
+
+    async def _event_stream():
+        path = fast_path(question)
+
+        if path == "sql_only":
+            # Fast-path: SQL -- generate answer synchronously then stream tokens
+            yield f'event: progress\ndata: {{"message": "Querying SQLite database..."}}\n\n'
+            answer = await asyncio.to_thread(_handle_sql_only, question)
+            followups = await asyncio.to_thread(generate_followup_questions, question, answer)
+            followups = followups or []
+            if session_id:
+                await asyncio.to_thread(save_exchange, session_id, question, answer)
+            # Stream the answer word-by-word so st.write_stream() shows it nicely
+            for word in answer.split(" "):
+                safe = (
+                    (word + " ")
+                    .replace("\\", "\\\\")
+                    .replace('"', '\\"')
+                    .replace("\n", "\\n")
+                )
+                yield f'event: token\ndata: {{"text": "{safe}"}}\n\n'
+                await asyncio.sleep(0)
+            done_payload = json.dumps({
+                "followups": followups,
+                "tools_used": [],
+                "rounds": 1,
+                "source": "fast_path_sql",
+                "session_id": session_id,
+            })
+            yield f"event: done\ndata: {done_payload}\n\n"
+            return
+
+        if path == "map_only":
+            # Fast-path: map -- generate answer synchronously then stream tokens
+            yield f'event: progress\ndata: {{"message": "Calculating campus route..."}}\n\n'
+            answer = await asyncio.to_thread(_handle_map_only, question, history)
+            followups = await asyncio.to_thread(generate_followup_questions, question, answer)
+            followups = followups or []
+            if session_id:
+                await asyncio.to_thread(save_exchange, session_id, question, answer)
+            for word in answer.split(" "):
+                safe = (
+                    (word + " ")
+                    .replace("\\", "\\\\")
+                    .replace('"', '\\"')
+                    .replace("\n", "\\n")
+                )
+                yield f'event: token\ndata: {{"text": "{safe}"}}\n\n'
+                await asyncio.sleep(0)
+            done_payload = json.dumps({
+                "followups": followups,
+                "tools_used": [],
+                "rounds": 1,
+                "source": "fast_path_map",
+                "session_id": session_id,
+            })
+            yield f"event: done\ndata: {done_payload}\n\n"
+            return
+
+        # Full agentic streaming loop
+        full_answer_parts = []
+        async for line in stream_agent(question=question, history=history):
+            yield line
+            # Accumulate tokens so we can save the full answer afterwards
+            if line.startswith("event: token"):
+                # Extract text value from the SSE data line
+                data_line = line.split("\ndata: ", 1)[-1].rstrip("\n")
+                try:
+                    chunk_text = json.loads(data_line).get("text", "")
+                    # Unescape the newlines that were escaped for SSE transport
+                    full_answer_parts.append(chunk_text.replace("\\n", "\n"))
+                except Exception:
+                    pass
+
+        if session_id:
+            full_answer = "".join(full_answer_parts)
+            await asyncio.to_thread(save_exchange, session_id, question, full_answer)
+
+    return StreamingResponse(
+        _event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # disable nginx buffering if behind a proxy
+        },
+    )
