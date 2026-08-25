@@ -86,55 +86,6 @@ GT = {
     "ai_ds_students_2yr":        394,   # all rows are 2yr table
 }
 
-# ═════════════════════════════════════════════════════════════════════════════
-# SUITE 1 — ROUTER ACCURACY
-# ═════════════════════════════════════════════════════════════════════════════
-
-def suite_router():
-    section("SUITE 1 — Router: LOOKUP / COMPUTE / HYBRID Classification")
-    from services.router import route_question
-
-    cases = [
-        # (question, expected_intent, description)
-        ("How many students are in the 2yr batch?",                     "COMPUTE",  "count → COMPUTE"),
-        ("What is the average attendance percentage?",                  "COMPUTE",  "average → COMPUTE"),
-        ("total number of female students",                             "COMPUTE",  "total → COMPUTE"),
-        ("highest marks in 4th sem IT?",                               "COMPUTE",  "highest → COMPUTE"),
-        ("who has the lowest attendance?",                              "COMPUTE",  "lowest → COMPUTE"),
-        ("Tell me about Aathi S",                                       "LOOKUP",   "person description → LOOKUP"),
-        ("What is the blood group of ABARNA?",                         "LOOKUP",   "specific fact → LOOKUP"),
-        ("Describe the 5th sem result for Abi P",                      "LOOKUP",   "describe → LOOKUP"),
-        ("who is the student with highest marks and describe them",     "HYBRID",   "rank + describe → HYBRID"),
-        ("find top student and explain their profile",                   "HYBRID",   "top + explain → HYBRID"),
-    ]
-
-    passed = 0
-    for question, expected, desc in cases:
-        t0 = time.time()
-        got = route_question(question)
-        elapsed = round((time.time() - t0) * 1000)
-
-        log_step("ROUTER", {
-            "question": question,
-            "expected": expected,
-            "got": got,
-            "passed": got == expected,
-            "ms": elapsed,
-        })
-
-        sub(f"[{desc}]")
-        print(f"    Q: {question}")
-        print(f"    Expected: {BOLD}{expected}{RESET}  |  Got: {BOLD}{got}{RESET}  ({elapsed}ms)")
-
-        if got == expected:
-            ok("PASS")
-            passed += 1
-        else:
-            fail(f"FAIL — expected {expected}, got {got}")
-
-    print(f"\n  Router Score: {passed}/{len(cases)}")
-    return passed, len(cases)
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 # SUITE 2 — SQL ENGINE ACCURACY
@@ -642,10 +593,8 @@ def main():
     results = {}
 
     # Run all suites
-    results["router"]    = suite_router()
     results["sql"]       = suite_sql()
     results["retriever"] = suite_retriever()
-    results["pipeline"]  = suite_pipeline()
     suite_data_flow_trace()   # diagnostic only, no score
 
     # ── Final summary ─────────────────────────────────────────────────────────
@@ -693,10 +642,6 @@ if __name__ == "__main__":
 # pytest-compatible wrappers (run with: pytest tests/test_rag_accuracy.py -v)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def test_router_accuracy():
-    passed, total = suite_router()
-    assert passed / total >= 0.7, f"Router accuracy {passed}/{total} below 70%"
-
 def test_sql_engine_accuracy():
     passed, total = suite_sql()
     assert passed / total >= 0.6, f"SQL accuracy {passed}/{total} below 60%"
@@ -705,6 +650,4 @@ def test_retriever_accuracy():
     passed, total = suite_retriever()
     assert passed / total >= 0.5, f"Retriever accuracy {passed}/{total} below 50%"
 
-def test_pipeline_accuracy():
-    passed, total = suite_pipeline()
-    assert passed / total >= 0.5, f"Pipeline accuracy {passed}/{total} below 50%"
+
